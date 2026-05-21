@@ -1,4 +1,5 @@
 #include "raylib.h"
+#include "game.h"
 
 int main(void)
 {
@@ -6,16 +7,20 @@ int main(void)
 
     SetTargetFPS(60);
 
+    InitGame();
+
     while (!WindowShouldClose())
     {
+        UpdateGame();
+
         BeginDrawing();
 
-        ClearBackground(BLACK);
-
-        DrawText("HELLO TRAINER", 400, 300, 40, WHITE);
+        DrawGame();
 
         EndDrawing();
     }
+
+    CloseGame();
 
     CloseWindow();
 
