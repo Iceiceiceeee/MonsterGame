@@ -12,6 +12,8 @@
 
 #include "raylib.h"   /* raylib 图形库 */
 #include "game.h"     /* 游戏模块头文件 */
+#include <string.h>   /* 用于 memcpy */
+#include <stdlib.h>   /* 用于 malloc/free */
 
 /* ======================== 类型定义 ======================== */
 
@@ -80,8 +82,18 @@ void InitGame(void)
     int *codepoints = LoadCodepoints(allText, &codepointCount);  /* 提取所有 Unicode 码点 */
 
 #if defined(__APPLE__)
-    /* macOS 系统：使用华文黑体 (STHeiti) */
-    fontCN = LoadFontEx("/System/Library/Fonts/STHeiti Medium.ttc", 48, codepoints, codepointCount);
+    /* macOS 系统：使用 Noto Sans SC (开源免费中文字体) */
+    /* 如果 ~/Library/Fonts/ 下没有，尝试系统自带华文黑体 */
+    const char *fontPath = "/Users/han/Library/Fonts/NotoSansSC[wght].ttf";
+    if (FileExists(fontPath))
+    {
+        fontCN = LoadFontEx(fontPath, 48, codepoints, codepointCount);
+    }
+    else
+    {
+        /* 降级方案：使用系统自带华文黑体 (STHeiti) */
+        fontCN = LoadFontEx("/System/Library/Fonts/STHeiti Medium.ttc", 48, codepoints, codepointCount);
+    }
 #else
     /* Windows 系统：使用黑体 (SimHei) */
     fontCN = LoadFontEx("C:/Windows/Fonts/simhei.ttf", 48, codepoints, codepointCount);
@@ -90,11 +102,40 @@ void InitGame(void)
 
     UnloadCodepoints(codepoints);  /* 释放临时码点数组 */
 
-    /* ---------- 加载人物图片 ---------- */
-    Image img = LoadImage("assets/master.png");
+    /* ---------- 加载人物图片 (绿幕抠图) ---------- */
+    Image img = LoadImage("assets/大木博士.jpg");
     ImageResize(&img, 400, 500);                                 /* 缩放到 400x500 */
-    masterTex = LoadTextureFromImage(img);
-    UnloadImage(img);                                             /* 释放临时图像数据 */
+    /* 转为 RGBA 格式以便操作 Alpha 通道 */
+    ImageFormat(&img, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+    /* 绿幕抠图 (Chroma Key)：
+       遍历所有像素，将绿色背景区域设为透明。
+       判断标准：绿色通道值明显高于红、蓝色通道，且绿色值足够高 */
+    Color *pixels = LoadImageColors(img);
+    for (int i = 0; i < img.width * img.height; i++)
+    {
+        /* 绿幕判断条件：
+           - 绿色通道值 > 红色通道值 + 60  (绿色明显偏多)
+           - 绿色通道值 > 蓝色通道值 + 60  (绿色明显偏多)
+           - 绿色通道值 > 80               (排除暗色区域误判) */
+        if (pixels[i].g > pixels[i].r + 60 &&
+            pixels[i].g > pixels[i].b + 60 &&
+            pixels[i].g > 80)
+        {
+            pixels[i].a = 0;     /* 绿色背景设为完全透明 */
+        }
+    }
+    /* 用修改后的像素数据更新图片 */
+    Image newImg = {
+        .data = pixels,
+        .width = img.width,
+        .height = img.height,
+        .format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8,
+        .mipmaps = 1
+    };
+    masterTex = LoadTextureFromImage(newImg);
+    /* 释放像素数据和原始图片 */
+    RL_FREE(pixels);
+    UnloadImage(img);
     SetTextureFilter(masterTex, TEXTURE_FILTER_POINT);            /* 像素风：点采样过滤 */
 }
 
