@@ -103,7 +103,7 @@ void InitGame(void)
     UnloadCodepoints(codepoints);  /* 释放临时码点数组 */
 
     /* ---------- 加载人物图片 (绿幕抠图) ---------- */
-    Image img = LoadImage("assets/大木博士.jpg");
+    Image img = LoadImage("assets/professor.jpg");
     ImageResize(&img, 400, 500);                                 /* 缩放到 400x500 */
     /* 转为 RGBA 格式以便操作 Alpha 通道 */
     ImageFormat(&img, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
