@@ -79,13 +79,19 @@ void InitGame(void)
     int codepointCount = 0;
     int *codepoints = LoadCodepoints(allText, &codepointCount);  /* 提取所有 Unicode 码点 */
 
+#if defined(__APPLE__)
+    /* macOS 系统：使用华文黑体 (STHeiti) */
+    fontCN = LoadFontEx("/System/Library/Fonts/STHeiti Medium.ttc", 48, codepoints, codepointCount);
+#else
+    /* Windows 系统：使用黑体 (SimHei) */
     fontCN = LoadFontEx("C:/Windows/Fonts/simhei.ttf", 48, codepoints, codepointCount);
+#endif
     SetTextureFilter(fontCN.texture, TEXTURE_FILTER_POINT);      /* 像素风：点采样过滤 */
 
     UnloadCodepoints(codepoints);  /* 释放临时码点数组 */
 
     /* ---------- 加载人物图片 ---------- */
-    Image img = LoadImage("D:/pokemon/master1.png");
+    Image img = LoadImage("assets/master.png");
     ImageResize(&img, 400, 500);                                 /* 缩放到 400x500 */
     masterTex = LoadTextureFromImage(img);
     UnloadImage(img);                                             /* 释放临时图像数据 */
