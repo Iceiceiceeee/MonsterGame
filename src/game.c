@@ -12,6 +12,8 @@
 
 #include "raylib.h"   /* raylib 图形库 */
 #include "game.h"     /* 游戏模块头文件 */
+#include "map.h"      /* 地图模块 */
+#include "player.h"   /* 玩家模块 */
 #include <string.h>   /* 用于 memcpy */
 #include <stdlib.h>   /* 用于 malloc/free */
 
@@ -32,7 +34,8 @@ typedef enum
     GAME_TITLE,     /**< 标题界面 */
     GAME_STORY,     /**< 故事剧情 */
     GAME_DIALOGUE,  /**< 角色对话 */
-    GAME_CREDITS    /**< 制作人员 */
+    GAME_CREDITS,   /**< 制作人员 */
+    GAME_WORLD      /**< 世界地图游玩 */
 } GameState;
 
 /* ======================== 全局状态 ======================== */
@@ -54,6 +57,13 @@ static Texture2D masterTex;      /**< 人物纹理精灵图 */
 
 static int storyStep;            /**< 故事进度步数（0~3，对应 4 句剧情文本） */
 
+/* ------------------------- 世界地图 ------------------------- */
+
+static Map      worldMap;        /**< 世界地图 */
+static Player   worldPlayer;     /**< 玩家对象 */
+static Camera2D worldCamera;     /**< 2D 摄像机 */
+static bool     stairsTriggered; /**< 楼梯触发标记 */
+
 /* ======================== 初始化 ======================== */
 
 /**
@@ -71,9 +81,9 @@ void InitGame(void)
     currentState = GAME_TITLE;
     storyStep = 0;
 
-    /* ---------- UI 布局（窗口尺寸 1280x720） ---------- */
-    btnStartGame = (Rectangle){ 490, 340, 300, 60 };   /* "开始游戏" 按钮：居中偏下 */
-    btnCredits   = (Rectangle){ 490, 420, 300, 60 };   /* "制作人员" 按钮：在开始按钮下方 */
+    /* ---------- UI 布局 ---------- */
+    btnStartGame = (Rectangle){ 330, 300, 300, 60 };   /* "开始游戏" 按钮：居中偏下 */
+    btnCredits   = (Rectangle){ 330, 380, 300, 60 };   /* "制作人员" 按钮：在开始按钮下方 */
 
     /* ---------- 加载中文字体 ---------- */
     /* 将游戏中所有需要用到的中文文本合并，提取所有 codepoint 以生成完整字体 */
@@ -193,10 +203,17 @@ void UpdateGame(void)
         /* ========== 对话界面 ========== */
         case GAME_DIALOGUE:
         {
-            /* 点击鼠标、空格或 ESC → 返回标题界面 */
+            /* 点击鼠标、空格或 ESC → 进入世界地图 */
             if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) || IsKeyPressed(KEY_SPACE) || IsKeyPressed(KEY_ESCAPE))
             {
-                currentState = GAME_TITLE;
+                worldMap = LoadMap("assets/maps/tootooo.tmj");
+                InitPlayer(&worldPlayer, worldMap.playerSpawn, &worldMap);
+                worldCamera.target = worldPlayer.pos;
+                worldCamera.offset = (Vector2){ 480, 320 };
+                worldCamera.rotation = 0.0f;
+                worldCamera.zoom = 1.5f;
+                stairsTriggered = false;
+                currentState = GAME_WORLD;
             }
 
         } break;
@@ -209,6 +226,39 @@ void UpdateGame(void)
             {
                 currentState = GAME_TITLE;
             }
+
+        } break;
+
+        /* ========== 世界地图游玩 ========== */
+        case GAME_WORLD:
+        {
+            float dt = GetFrameTime();
+
+            /* 按 ESC → 返回标题界面 */
+            if (IsKeyPressed(KEY_ESCAPE))
+            {
+                UnloadMap(&worldMap);
+                currentState = GAME_TITLE;
+                break;
+            }
+
+            /* 楼梯触发：按 E 键传送 */
+            if (stairsTriggered && IsKeyPressed(KEY_E))
+            {
+                /* 目前楼下没有地图，先做触发逻辑，后续可在此加载下楼地图 */
+            }
+
+            UpdatePlayer(&worldPlayer, &worldMap, dt);
+
+            stairsTriggered = worldPlayer.onStairs;
+
+            /* 摄像机平滑跟随玩家 */
+            Vector2 target = {
+                worldPlayer.pos.x + worldPlayer.size.x / 2,
+                worldPlayer.pos.y + worldPlayer.size.y / 2
+            };
+            worldCamera.target.x += (target.x - worldCamera.target.x) * 8.0f * dt;
+            worldCamera.target.y += (target.y - worldCamera.target.y) * 8.0f * dt;
 
         } break;
     }
@@ -227,8 +277,8 @@ void UpdateGame(void)
 void DrawPixelGradientBackground(void)
 {
     const int blockSize = 32;       /* 像素块大小 */
-    const int screenW = 1280;       /* 屏幕宽度 */
-    const int screenH = 720;        /* 屏幕高度 */
+    const int screenW = GetScreenWidth();
+    const int screenH = GetScreenHeight();
 
     /* ---------- 天空渐变：从深蓝到浅蓝共 20 种颜色 ---------- */
     Color gradient[] = {
@@ -301,7 +351,7 @@ void DrawGame(void)
         case GAME_TITLE:
         {
             /* 游戏主标题 */
-            DrawText("POKEMON FIRE RED", 350, 200, 50, RED);
+            DrawText("POKEMON FIRE RED", 280, 180, 50, RED);
 
             /* ---------- "开始游戏" 按钮 ---------- */
             Color btnStartColor = LIME;
@@ -355,14 +405,14 @@ void DrawGame(void)
             Vector2 textSize = MeasureTextEx(fontCN, text, fontSize, 1);
             /* 居中显示当前故事台词 */
             DrawTextEx(fontCN, text,
-                       (Vector2){ (1280 - textSize.x) / 2, (720 - textSize.y) / 2 },
+                       (Vector2){ (GetScreenWidth() -textSize.x) / 2, (GetScreenHeight() -textSize.y) / 2 },
                        fontSize, 1, WHITE);
 
             /* 底部操作提示：根据是否到达最后一句话展示不同文本 */
             const char *hintText = (storyStep < 3) ? "点击任意位置或按下空格继续" : "点击任意位置或按下空格开始";
             Vector2 hintSize = MeasureTextEx(fontCN, hintText, 24, 1);
             DrawTextEx(fontCN, hintText,
-                       (Vector2){ (1280 - hintSize.x) / 2, 600 },
+                       (Vector2){ (GetScreenWidth() -hintSize.x) / 2, 600 },
                        24, 1, GRAY);
 
         } break;
@@ -373,21 +423,22 @@ void DrawGame(void)
             /* 绘制像素风天空与地面渐变背景 */
             DrawPixelGradientBackground();
 
-            /* 显示人物立绘（居中偏上） */
-            int charX = (1280 - masterTex.width) / 2;
-            int charY = 140;
-            DrawTexture(masterTex, charX, charY, WHITE);
+            /* 显示人物立绘（居中偏上，缩放到适合新窗口） */
+            float charW = 300.0f;
+            float charH = 375.0f;
+            Rectangle charSrc = { 0, 0, (float)masterTex.width, (float)masterTex.height };
+            Rectangle charDst = { (GetScreenWidth() - charW) / 2, 70, charW, charH };
+            DrawTexturePro(masterTex, charSrc, charDst, (Vector2){0, 0}, 0.0f, WHITE);
 
             /* ---------- 底部对话框 ---------- */
-            Rectangle dialogBox = { 60, 580, 1160, 120 };  /* 留边距，宽 1160 高 120 */
-            DrawRectangleRec(dialogBox, (Color){ 0, 0, 0, 200 });         /* 半透明黑色背景 */
-            DrawRectangleLinesEx(dialogBox, 4, (Color){ 255, 255, 255, 220 });  /* 白色半透明边框 */
+            Rectangle dialogBox = { 60, 460, GetScreenWidth() - 120.0f, 140 };
+            DrawRectangleRec(dialogBox, (Color){ 0, 0, 0, 210 });
+            DrawRectangleLinesEx(dialogBox, 4, (Color){ 255, 255, 255, 220 });
 
             /* 对话框内容文字 */
             const char *dialogText = "欢迎来到这个神奇的世界";
-            int dialogFontSize = 40;
+            int dialogFontSize = 34;
             Vector2 dialogTextSize = MeasureTextEx(fontCN, dialogText, dialogFontSize, 1);
-            /* 文字在对话框内居中 */
             DrawTextEx(fontCN, dialogText,
                        (Vector2){ dialogBox.x + (dialogBox.width - dialogTextSize.x) / 2,
                                   dialogBox.y + (dialogBox.height - dialogTextSize.y) / 2 },
@@ -395,10 +446,10 @@ void DrawGame(void)
 
             /* 右下角操作提示 */
             const char *hint = "点击任意位置继续";
-            Vector2 hintSize = MeasureTextEx(fontCN, hint, 20, 1);
+            Vector2 hintSize = MeasureTextEx(fontCN, hint, 18, 1);
             DrawTextEx(fontCN, hint,
-                       (Vector2){ 1280 - hintSize.x - 20, dialogBox.y + dialogBox.height - 30 },
-                       20, 1, LIGHTGRAY);
+                       (Vector2){ GetScreenWidth() - hintSize.x - 20, dialogBox.y + dialogBox.height - 26 },
+                       18, 1, LIGHTGRAY);
 
         } break;
 
@@ -409,7 +460,7 @@ void DrawGame(void)
             const char *titleText = "制作人员";
             Vector2 titleSize = MeasureTextEx(fontCN, titleText, 48, 1);
             DrawTextEx(fontCN, titleText,
-                       (Vector2){ (1280 - titleSize.x) / 2, 150 },
+                       (Vector2){ (GetScreenWidth() -titleSize.x) / 2, 150 },
                        48, 1, YELLOW);
 
             /* 制作人员列表 */
@@ -421,7 +472,7 @@ void DrawGame(void)
                 int fontSize = 36;
                 int textWidth = MeasureText(credits[i], fontSize);
                 DrawText(credits[i],
-                         (1280 - textWidth) / 2,
+                         (GetScreenWidth() -textWidth) / 2,
                          280 + i * 60,
                          fontSize, WHITE);
             }
@@ -430,8 +481,38 @@ void DrawGame(void)
             const char *hintText = "点击任意位置或按 ESC 返回";
             Vector2 hintSize = MeasureTextEx(fontCN, hintText, 24, 1);
             DrawTextEx(fontCN, hintText,
-                       (Vector2){ (1280 - hintSize.x) / 2, 550 },
+                       (Vector2){ (GetScreenWidth() -hintSize.x) / 2, 550 },
                        24, 1, GRAY);
+
+        } break;
+
+        /* ========== 世界地图游玩 ========== */
+        case GAME_WORLD:
+        {
+            BeginMode2D(worldCamera);
+
+            DrawMap(&worldMap);
+            DrawPlayer(&worldPlayer, &worldMap);
+
+            EndMode2D();
+
+            /* 楼梯提示 UI */
+            if (stairsTriggered)
+            {
+                const char *hint = "按 E 下楼";
+                int fontSize = 28;
+                Vector2 hs = MeasureTextEx(fontCN, hint, fontSize, 1);
+                DrawRectangle(GetScreenWidth() / 2 - (int)hs.x / 2 - 16, 620,
+                              (int)hs.x + 32, (int)hs.y + 16,
+                              (Color){ 0, 0, 0, 180 });
+                DrawTextEx(fontCN, hint,
+                           (Vector2){ GetScreenWidth() / 2.0f - hs.x / 2, 628 },
+                           fontSize, 1, WHITE);
+            }
+
+            /* 右下角操作提示 */
+            const char *ctrl = "WASD 移动 | Shift 跑步 | ESC 返回";
+            DrawText(ctrl, 10, 695, 16, LIGHTGRAY);
 
         } break;
     }
@@ -446,6 +527,9 @@ void DrawGame(void)
  */
 void CloseGame(void)
 {
+    if (currentState == GAME_WORLD) {
+        UnloadMap(&worldMap);
+    }
     UnloadTexture(masterTex);  /* 卸载人物纹理 */
     UnloadFont(fontCN);        /* 卸载中文字体 */
 }
