@@ -30,7 +30,7 @@
 int main(void)
 {
     /* ---------- 初始化阶段 ---------- */
-    InitWindow(1280, 720, "Monster Game");  /* 创建窗口：1280x720，标题 "Monster Game" */
+    InitWindow(960, 640, "Monster Game");  /* 创建窗口：960x640，标题 "Monster Game" */
 
     SetTargetFPS(60);                       /* 设定目标帧率为 60 FPS */
 
