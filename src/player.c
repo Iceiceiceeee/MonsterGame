@@ -171,16 +171,38 @@ void UpdatePlayer(Player *p, Map *map, float dt)
             break;
         }
     }
+
+    /* --- door check --- */
+    p->onDoor = false;
+    p->doorTargetMap[0] = '\0';
+    for (int i = 0; i < map->objectCount; i++) {
+        if (strcmp(map->objects[i].type, "door") == 0) {
+            if (rectsOverlap(footRect, map->objects[i].rect)) {
+                p->onDoor = true;
+                strncpy(p->doorTargetMap, map->objects[i].targetMap,
+                        sizeof(p->doorTargetMap) - 1);
+                p->doorTargetX = map->objects[i].targetX;
+                p->doorTargetY = map->objects[i].targetY;
+                TraceLog(LOG_INFO, "DOOR: targetMap=%s target=(%.0f, %.0f)",
+                         p->doorTargetMap, p->doorTargetX, p->doorTargetY);
+                break;
+            }
+        }
+    }
 }
 
 /* ---- draw ---- */
 
 void DrawPlayer(Player *p, Map *map)
 {
+    /* player sheet is the last tileset */
+    if (map->tilesetCount == 0) return;
+    Tileset *ps = &map->tilesets[map->tilesetCount - 1];
+
     int tileId = p->animFrames[p->frame];
-    int col    = tileId % map->psCols;
-    float tw   = (float)map->psTileW;
-    float th   = (float)map->psTileH;
+    int col    = tileId % ps->columns;
+    float tw   = (float)ps->tileWidth;
+    float th   = (float)ps->tileHeight;
 
     Rectangle src = { col * tw, 0, tw, th };
     if (p->dir == DIR_RIGHT) {
@@ -194,5 +216,5 @@ void DrawPlayer(Player *p, Map *map)
         p->size.y
     };
 
-    DrawTexturePro(map->playerSheet, src, dst, (Vector2){0, 0}, 0.0f, WHITE);
+    DrawTexturePro(ps->texture, src, dst, (Vector2){0, 0}, 0.0f, WHITE);
 }

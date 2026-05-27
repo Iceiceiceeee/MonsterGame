@@ -18,6 +18,10 @@ typedef struct {
     bool running;
     bool moving;
     bool onStairs;
+    bool onDoor;
+    char doorTargetMap[64];
+    float doorTargetX;
+    float doorTargetY;
 
     /* animation */
     int frame;

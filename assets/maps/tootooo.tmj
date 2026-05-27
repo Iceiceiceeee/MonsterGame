@@ -236,7 +236,40 @@
                  "width":34,
                  "x":471,
                  "y":73
-                }, 
+                },
+                {
+                 "height":40,
+                 "id":20,
+                 "name":"",
+                 "opacity":1,
+                 "properties":[
+                        {
+                         "name":"door",
+                         "type":"bool",
+                         "value":true
+                        },
+                        {
+                         "name":"targetMap",
+                         "type":"string",
+                         "value":"yilou.tmj"
+                        },
+                        {
+                         "name":"targetX",
+                         "type":"float",
+                         "value":395
+                        },
+                        {
+                         "name":"targetY",
+                         "type":"float",
+                         "value":95
+                        }],
+                 "rotation":0,
+                 "type":"",
+                 "visible":true,
+                 "width":34,
+                 "x":471,
+                 "y":73
+                },
                 {
                  "height":432,
                  "id":14,
@@ -367,7 +400,7 @@
          "y":0
         }],
  "nextlayerid":5,
- "nextobjectid":20,
+ "nextobjectid":21,
  "orientation":"orthogonal",
  "renderorder":"right-down",
  "tiledversion":"1.12.1",
@@ -375,15 +408,21 @@
  "tilesets":[
         {
          "firstgid":1,
-         "source":"pokemon tiled\/QQ_1779796916957.tsx"
-        }, 
+         "image":"QQ_1779796916957.png",
+         "tilewidth":16,
+         "tileheight":16
+        },
         {
          "firstgid":946,
-         "source":"pokemon tiled\/6abad8d14de667fabaecfea4a7242f82.tsx"
-        }, 
+         "image":"6abad8d14de667fabaecfea4a7242f82.png",
+         "tilewidth":16,
+         "tileheight":16
+        },
         {
          "firstgid":1786,
-         "source":"pokemon tiled\/green_surf_run_\u526f\u672c.tsx"
+         "image":"player_sheet.png",
+         "tilewidth":16,
+         "tileheight":20
         }],
  "tilewidth":16,
  "type":"map",

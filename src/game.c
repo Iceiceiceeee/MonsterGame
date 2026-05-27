@@ -14,6 +14,7 @@
 #include "game.h"     /* 游戏模块头文件 */
 #include "map.h"      /* 地图模块 */
 #include "player.h"   /* 玩家模块 */
+#include <stdio.h>    /* 用于 snprintf */
 #include <string.h>   /* 用于 memcpy */
 #include <stdlib.h>   /* 用于 malloc/free */
 
@@ -242,13 +243,29 @@ void UpdateGame(void)
                 break;
             }
 
-            /* 楼梯触发：按 E 键传送 */
-            if (stairsTriggered && IsKeyPressed(KEY_E))
-            {
-                /* 目前楼下没有地图，先做触发逻辑，后续可在此加载下楼地图 */
-            }
-
             UpdatePlayer(&worldPlayer, &worldMap, dt);
+
+            /* 门传送：触碰门自动切换地图 */
+            if (worldPlayer.onDoor &&
+                worldPlayer.doorTargetMap[0] != '\0')
+            {
+                char mapPath[512];
+                snprintf(mapPath, sizeof(mapPath), "assets/maps/%s",
+                         worldPlayer.doorTargetMap);
+                TraceLog(LOG_INFO, "TELEPORT: loading %s -> (%.0f, %.0f)",
+                         mapPath, worldPlayer.doorTargetX, worldPlayer.doorTargetY);
+                Map newMap = LoadMap(mapPath);
+                if (newMap.floorData) {
+                    UnloadMap(&worldMap);
+                    worldMap = newMap;
+                    worldPlayer.pos.x = worldPlayer.doorTargetX;
+                    worldPlayer.pos.y = worldPlayer.doorTargetY;
+                    worldCamera.target = worldPlayer.pos;
+                    TraceLog(LOG_INFO, "TELEPORT: success!");
+                } else {
+                    TraceLog(LOG_WARNING, "TELEPORT: failed to load %s", mapPath);
+                }
+            }
 
             stairsTriggered = worldPlayer.onStairs;
 
@@ -495,20 +512,6 @@ void DrawGame(void)
             DrawPlayer(&worldPlayer, &worldMap);
 
             EndMode2D();
-
-            /* 楼梯提示 UI */
-            if (stairsTriggered)
-            {
-                const char *hint = "按 E 下楼";
-                int fontSize = 28;
-                Vector2 hs = MeasureTextEx(fontCN, hint, fontSize, 1);
-                DrawRectangle(GetScreenWidth() / 2 - (int)hs.x / 2 - 16, 620,
-                              (int)hs.x + 32, (int)hs.y + 16,
-                              (Color){ 0, 0, 0, 180 });
-                DrawTextEx(fontCN, hint,
-                           (Vector2){ GetScreenWidth() / 2.0f - hs.x / 2, 628 },
-                           fontSize, 1, WHITE);
-            }
 
             /* 右下角操作提示 */
             const char *ctrl = "WASD 移动 | Shift 跑步 | ESC 返回";

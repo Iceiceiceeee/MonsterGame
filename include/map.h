@@ -6,10 +6,22 @@
 #define MAX_MAP_OBJECTS   128
 #define MAX_SOLID_RECTS    64
 #define MAX_STAIRS_RECTS   16
+#define MAX_TILESETS        8
+
+typedef struct {
+    Texture2D texture;
+    int firstGid;
+    int columns;
+    int tileWidth;
+    int tileHeight;
+} Tileset;
 
 typedef struct {
     char name[64];
     char type[32];
+    char targetMap[64];
+    float targetX;
+    float targetY;
     Rectangle rect;
 } MapObject;
 
@@ -22,23 +34,16 @@ typedef struct {
     int *floorData;
     int dataSize;
 
-    /* tilesets */
-    Texture2D tileset1;
-    int ts1Cols, ts1FirstGid;
-    Texture2D tileset2;
-    int ts2Cols, ts2FirstGid;
-
-    /* player sprite sheet */
-    Texture2D playerSheet;
-    int psCols, psFirstGid;
-    int psTileW, psTileH;
+    /* tilesets parsed from TMJ */
+    Tileset tilesets[MAX_TILESETS];
+    int tilesetCount;
 
     /* background image layer */
     Texture2D backImage;
     float backOpacity;
     bool hasBackImage;
 
-    /* objects parsed from item layer */
+    /* objects parsed from object layers */
     MapObject objects[MAX_MAP_OBJECTS];
     int objectCount;
 

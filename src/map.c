@@ -62,8 +62,12 @@ Map LoadMap(const char *filepath)
     cJSON *layers = cJSON_GetObjectItem(root, "layers");
     cJSON *layer  = NULL;
     cJSON_ArrayForEach(layer, layers) {
-        const char *type = cJSON_GetObjectItem(layer, "type")->valuestring;
-        const char *name = cJSON_GetObjectItem(layer, "name")->valuestring;
+        cJSON *typeNode = cJSON_GetObjectItem(layer, "type");
+        cJSON *nameNode = cJSON_GetObjectItem(layer, "name");
+        if (!typeNode || !nameNode) continue;
+        const char *type = typeNode->valuestring;
+        const char *name = nameNode->valuestring;
+        if (!type || !name) continue;
 
         if (strcmp(type, "imagelayer") == 0 && strcmp(name, "back") == 0) {
             const char *imgPath = cJSON_GetObjectItem(layer, "image")->valuestring;
@@ -98,20 +102,36 @@ Map LoadMap(const char *filepath)
                 if (map.objectCount >= MAX_MAP_OBJECTS) break;
                 MapObject *mo = &map.objects[map.objectCount];
 
-                mo->rect.x      = (float)cJSON_GetObjectItem(obj, "x")->valuedouble;
-                mo->rect.y      = (float)cJSON_GetObjectItem(obj, "y")->valuedouble;
-                mo->rect.width  = (float)cJSON_GetObjectItem(obj, "width")->valuedouble;
-                mo->rect.height = (float)cJSON_GetObjectItem(obj, "height")->valuedouble;
+                cJSON *ox = cJSON_GetObjectItem(obj, "x");
+                cJSON *oy = cJSON_GetObjectItem(obj, "y");
+                cJSON *ow = cJSON_GetObjectItem(obj, "width");
+                cJSON *oh = cJSON_GetObjectItem(obj, "height");
+                if (!ox || !oy || !ow || !oh) continue;
+                mo->rect.x      = (float)ox->valuedouble;
+                mo->rect.y      = (float)oy->valuedouble;
+                mo->rect.width  = (float)ow->valuedouble;
+                mo->rect.height = (float)oh->valuedouble;
 
-                /* extract type from properties */
+                /* extract properties */
                 cJSON *props = cJSON_GetObjectItem(obj, "properties");
                 if (props && cJSON_IsArray(props)) {
                     cJSON *prop = NULL;
                     cJSON_ArrayForEach(prop, props) {
-                        const char *pname  = cJSON_GetObjectItem(prop, "name")->valuestring;
-                        cJSON *pval        = cJSON_GetObjectItem(prop, "value");
-                        if (pval && cJSON_IsTrue(pval)) {
+                        cJSON *nameNode = cJSON_GetObjectItem(prop, "name");
+                        cJSON *pval     = cJSON_GetObjectItem(prop, "value");
+                        if (!nameNode || !pval) continue;
+                        const char *pname = nameNode->valuestring;
+                        if (!pname) continue;
+                        if (cJSON_IsTrue(pval)) {
                             strncpy(mo->type, pname, sizeof(mo->type) - 1);
+                        } else if (cJSON_IsString(pval)) {
+                            if (strcmp(pname, "targetMap") == 0)
+                                strncpy(mo->targetMap, pval->valuestring, sizeof(mo->targetMap) - 1);
+                        } else if (cJSON_IsNumber(pval)) {
+                            if (strcmp(pname, "targetX") == 0)
+                                mo->targetX = (float)pval->valuedouble;
+                            else if (strcmp(pname, "targetY") == 0)
+                                mo->targetY = (float)pval->valuedouble;
                         }
                     }
                 }
@@ -124,48 +144,54 @@ Map LoadMap(const char *filepath)
             bool firstPlayer = true;
             cJSON_ArrayForEach(obj, objects) {
                 if (firstPlayer) {
-                    map.playerSpawn.x = (float)cJSON_GetObjectItem(obj, "x")->valuedouble;
-                    map.playerSpawn.y = (float)cJSON_GetObjectItem(obj, "y")->valuedouble;
-                    firstPlayer = false;
+                    cJSON *px = cJSON_GetObjectItem(obj, "x");
+                    cJSON *py = cJSON_GetObjectItem(obj, "y");
+                    if (px && py) {
+                        map.playerSpawn.x = (float)px->valuedouble;
+                        map.playerSpawn.y = (float)py->valuedouble;
+                        firstPlayer = false;
+                    }
                 }
             }
         }
     }
 
-    /* ---- load tileset textures ---- */
-    {
-        char path[1024];
+    /* ---- parse tilesets from TMJ ---- */
+    cJSON *tilesets = cJSON_GetObjectItem(root, "tilesets");
+    if (tilesets && cJSON_IsArray(tilesets)) {
+        cJSON *ts = NULL;
+        cJSON_ArrayForEach(ts, tilesets) {
+            if (map.tilesetCount >= MAX_TILESETS) break;
 
-        /* tileset 1: QQ_1779796916957.png, 16x16, 35 cols */
-        resolveFullPath(path, sizeof(path), "QQ_1779796916957.png");
-        Image img = LoadImage(path);
-        if (img.data) {
-            map.tileset1    = LoadTextureFromImage(img);
-            map.ts1Cols     = img.width / 16;
-            map.ts1FirstGid = 1;
-            UnloadImage(img);
-        }
+            cJSON *firstGidNode   = cJSON_GetObjectItem(ts, "firstgid");
+            cJSON *tileWidthNode  = cJSON_GetObjectItem(ts, "tilewidth");
+            cJSON *tileHeightNode = cJSON_GetObjectItem(ts, "tileheight");
+            cJSON *imageNode      = cJSON_GetObjectItem(ts, "image");
 
-        /* tileset 2: 6abad8d14de667fabaecfea4a7242f82.png, 16x16, 35 cols */
-        resolveFullPath(path, sizeof(path), "6abad8d14de667fabaecfea4a7242f82.png");
-        img = LoadImage(path);
-        if (img.data) {
-            map.tileset2    = LoadTextureFromImage(img);
-            map.ts2Cols     = 35;
-            map.ts2FirstGid = 946;
-            UnloadImage(img);
-        }
+            /* skip tilesets with source references (.tsx/.tsj) — they have no inline data */
+            if (!firstGidNode || !tileWidthNode || !tileHeightNode || !imageNode)
+                continue;
 
-        /* player sheet: player_sheet.png, 16x20, 14 cols */
-        resolveFullPath(path, sizeof(path), "player_sheet.png");
-        img = LoadImage(path);
-        if (img.data) {
-            map.playerSheet  = LoadTextureFromImage(img);
-            map.psCols       = img.width / 16;
-            map.psFirstGid   = 1786;
-            map.psTileW      = 16;
-            map.psTileH      = img.height;
-            UnloadImage(img);
+            Tileset *t = &map.tilesets[map.tilesetCount];
+
+            t->firstGid   = firstGidNode->valueint;
+            t->tileWidth  = tileWidthNode->valueint;
+            t->tileHeight = tileHeightNode->valueint;
+
+            const char *imgPath = imageNode->valuestring;
+            if (!imgPath) continue;
+
+            char fullPath[1024];
+            resolveFullPath(fullPath, sizeof(fullPath), imgPath);
+            Image img = LoadImage(fullPath);
+            if (img.data) {
+                t->texture = LoadTextureFromImage(img);
+                t->columns = img.width / t->tileWidth;
+                UnloadImage(img);
+                map.tilesetCount++;
+            } else {
+                TraceLog(LOG_WARNING, "Failed to load tileset image: %s", fullPath);
+            }
         }
     }
 
@@ -189,10 +215,12 @@ Map LoadMap(const char *filepath)
 void UnloadMap(Map *map)
 {
     free(map->floorData);
-    if (map->tileset1.id > 0)    UnloadTexture(map->tileset1);
-    if (map->tileset2.id > 0)    UnloadTexture(map->tileset2);
-    if (map->playerSheet.id > 0) UnloadTexture(map->playerSheet);
-    if (map->hasBackImage)       UnloadTexture(map->backImage);
+    for (int i = 0; i < map->tilesetCount; i++) {
+        if (map->tilesets[i].texture.id > 0) {
+            UnloadTexture(map->tilesets[i].texture);
+        }
+    }
+    if (map->hasBackImage) UnloadTexture(map->backImage);
     memset(map, 0, sizeof(*map));
 }
 
@@ -204,6 +232,19 @@ static Rectangle tileSourceRect(int gid, int firstGid, int cols, int tileW, int 
     int col = localId % cols;
     int row = localId / cols;
     return (Rectangle){ (float)(col * tileW), (float)(row * tileH), (float)tileW, (float)tileH };
+}
+
+/* find the tileset that contains a given GID (highest firstGid <= gid) */
+static Tileset *tilesetForGid(Map *map, int gid)
+{
+    Tileset *best = NULL;
+    for (int i = 0; i < map->tilesetCount; i++) {
+        if (map->tilesets[i].firstGid <= gid &&
+            (!best || map->tilesets[i].firstGid > best->firstGid)) {
+            best = &map->tilesets[i];
+        }
+    }
+    return best;
 }
 
 void DrawMap(Map *map)
@@ -226,28 +267,18 @@ void DrawMap(Map *map)
                 int gid = map->floorData[y * map->width + x];
                 if (gid == 0) continue;
 
-                Rectangle src = {0};
-                Texture2D tex = {0};
+                Tileset *ts = tilesetForGid(map, gid);
+                if (!ts || ts->texture.id == 0) continue;
 
-                if (gid >= map->ts2FirstGid && map->tileset2.id > 0) {
-                    src = tileSourceRect(gid, map->ts2FirstGid, map->ts2Cols,
-                                         map->tileWidth, map->tileHeight);
-                    tex = map->tileset2;
-                } else if (gid >= map->ts1FirstGid && map->tileset1.id > 0) {
-                    src = tileSourceRect(gid, map->ts1FirstGid, map->ts1Cols,
-                                         map->tileWidth, map->tileHeight);
-                    tex = map->tileset1;
-                }
-
-                if (tex.id > 0) {
-                    Rectangle dst = {
-                        (float)(x * map->tileWidth),
-                        (float)(y * map->tileHeight),
-                        (float)map->tileWidth,
-                        (float)map->tileHeight
-                    };
-                    DrawTexturePro(tex, src, dst, (Vector2){0, 0}, 0.0f, WHITE);
-                }
+                Rectangle src = tileSourceRect(gid, ts->firstGid, ts->columns,
+                                               ts->tileWidth, ts->tileHeight);
+                Rectangle dst = {
+                    (float)(x * map->tileWidth),
+                    (float)(y * map->tileHeight),
+                    (float)map->tileWidth,
+                    (float)map->tileHeight
+                };
+                DrawTexturePro(ts->texture, src, dst, (Vector2){0, 0}, 0.0f, WHITE);
             }
         }
     }

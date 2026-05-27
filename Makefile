@@ -1,3 +1,5 @@
+SHELL := /bin/bash
+
 # ======================== 平台检测与配置 ========================
 
 UNAME_S := $(shell uname -s)
@@ -52,10 +54,10 @@ TARGET   := $(BUILD_DIR)/monster_game
 all: $(TARGET)
 
 $(TARGET): $(OBJS) | $(BUILD_DIR)
-	$(CC) -o $@ $^ $(LDLIBS)
+	TMPDIR=/tmp TEMP=/tmp TMP=/tmp $(CC) -o $@ $^ $(LDLIBS)
 
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
+	TMPDIR=/tmp TEMP=/tmp TMP=/tmp $(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
