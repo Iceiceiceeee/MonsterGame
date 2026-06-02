@@ -10,12 +10,15 @@
  * - 按钮交互与鼠标检测
  */
 
-#include "raylib.h"   /* raylib 图形库 */
-#include "game.h"     /* 游戏模块头文件 */
-#include "map.h"      /* 地图模块 */
-#include "player.h"   /* 玩家模块 */
-#include <string.h>   /* 用于 memcpy */
-#include <stdlib.h>   /* 用于 malloc/free */
+#include "raylib.h"    /* raylib 图形库 */
+#include "game.h"      /* 游戏模块头文件 */
+#include "map.h"       /* 地图模块 */
+#include "player.h"    /* 玩家模块 */
+#include "battle.h"    /* 战斗模块 */
+#include "pokemon_db.h"/* 宝可梦数据库 */
+#include <string.h>    /* 用于 memcpy */
+#include <stdlib.h>    /* 用于 malloc/free */
+#include <stdio.h>     /* snprintf */
 
 /* ======================== 类型定义 ======================== */
 
@@ -35,6 +38,8 @@ typedef enum
     GAME_STORY,     /**< 故事剧情 */
     GAME_DIALOGUE,  /**< 角色对话 */
     GAME_CREDITS,   /**< 制作人员 */
+    GAME_BATTLE,    /**< 战斗界面 */
+    GAME_POKEDEX,   /**< 宝可梦图鉴 */
     GAME_WORLD      /**< 世界地图游玩 */
 } GameState;
 
@@ -64,6 +69,18 @@ static Player   worldPlayer;     /**< 玩家对象 */
 static Camera2D worldCamera;     /**< 2D 摄像机 */
 static bool     stairsTriggered; /**< 楼梯触发标记 */
 
+/* ------------------------- 战斗 ------------------------- */
+
+static BattleContext battleCtx;   /**< 战斗上下文 */
+
+/* ------------------------- 图鉴 ------------------------- */
+
+static int pokedexSel = 0;         /**< 图鉴当前选中项索引 */
+static int pokedexScroll = 0;      /**< 图鉴列表滚动偏移 */
+static int pokedexPrevState = 0;   /**< 进入图鉴前的游戏状态 */
+static int pokedexLoadedId = -1;   /**< 当前已加载的精灵贴图 ID */
+static Texture2D pokedexSprite;    /**< 精灵预览贴图 */
+
 /* ======================== 初始化 ======================== */
 
 /**
@@ -87,9 +104,20 @@ void InitGame(void)
 
     /* ---------- 加载中文字体 ---------- */
     /* 将游戏中所有需要用到的中文文本合并，提取所有 codepoint 以生成完整字体 */
-    const char *allText = "开始游戏制作人员点击任意位置或按空格继续这个世界有着神奇的生物它们被称之为精灵与我们相伴共生并与一起战斗开启这段旅程吧欢迎来到这个神奇的世界";
+    const char *allText = "开始游戏制作人员点击任意位置或按空格继续这个世界有着神奇的生物它们被称之为精灵与我们相伴共生并与一起战斗开启这段旅程吧欢迎来到这个神奇的世界野生的出现了要做什么使用了倒下了逃跑成功了没有道具可以使用没有可以替换的精灵技能点数不足逃跑道具LvHP一般火水草电冰格斗毒地面飞行超能力岩石龙钢恶虫幽灵妖精宝可梦图鉴只浏览返回属性攻击防御特攻特防速度总和配招威力命中无种族值数据共阿勃梭鲁化石翼龙波士可多拉长尾怪手胡地七夕青鸟电龙太古羽虫阿柏怪风速狗精神切割试刀剑舞龙之爪重金属爆弹双重攻击高速星星影子球反射壁光墙龙息唱歌白雾神秘守护电磁波毒击大蛇瞪眼盘蜷神速喷火龙火焰喷射翅膀攻击劈开龙之怒凯西念力瞬间移动杰尼龟水枪泡沫咬住撞击水炮吐丝虫咬岩崩咬碎地震十万伏特打雷铁头尖石攻击闪焰冲锋火焰旋涡高速移动信号光束种子机关枪精神强念0123456789";
     int codepointCount = 0;
     int *codepoints = LoadCodepoints(allText, &codepointCount);  /* 提取所有 Unicode 码点 */
+
+    /* 额外追加 ASCII 可打印字符 (32-126): 英文/数字/标点 */
+    int totalCount = codepointCount + 95;
+    int *allCodepoints = (int *)malloc(sizeof(int) * totalCount);
+    memcpy(allCodepoints, codepoints, sizeof(int) * codepointCount);
+    for (int i = 0; i < 95; i++) {
+        allCodepoints[codepointCount + i] = 32 + i;
+    }
+    UnloadCodepoints(codepoints);
+    codepoints = allCodepoints;
+    codepointCount = totalCount;
 
 #if defined(__APPLE__)
     /* macOS 系统：使用 Noto Sans SC (开源免费中文字体) */
@@ -111,6 +139,10 @@ void InitGame(void)
     SetTextureFilter(fontCN.texture, TEXTURE_FILTER_POINT);      /* 像素风：点采样过滤 */
 
     UnloadCodepoints(codepoints);  /* 释放临时码点数组 */
+
+    /* ---------- 加载宝可梦数据库 ---------- */
+    LoadMoveDB();
+    LoadPokemonDB();
 
     /* ---------- 加载人物图片 (绿幕抠图) ---------- */
     Image img = LoadImage("assets/professor.jpg");
@@ -229,10 +261,83 @@ void UpdateGame(void)
 
         } break;
 
+        /* ========== 战斗界面 ========== */
+        case GAME_BATTLE:
+        {
+            UpdateBattle(&battleCtx);
+            if (IsBattleFinished()) {
+                CloseBattle(&battleCtx);
+                currentState = GAME_WORLD;
+            }
+        } break;
+
+        /* ========== 宝可梦图鉴 ========== */
+        case GAME_POKEDEX:
+        {
+            int count = GetSpeciesCount();
+            int prevSel = pokedexSel;
+
+            /* 上下导航 */
+            if (IsKeyPressed(KEY_DOWN) || IsKeyPressed(KEY_S)) {
+                pokedexSel++;
+                if (pokedexSel >= count) pokedexSel = count - 1;
+            }
+            if (IsKeyPressed(KEY_UP) || IsKeyPressed(KEY_W)) {
+                pokedexSel--;
+                if (pokedexSel < 0) pokedexSel = 0;
+            }
+            /* 翻页 */
+            if (IsKeyPressed(KEY_RIGHT) || IsKeyPressed(KEY_D)) {
+                pokedexSel += 10;
+                if (pokedexSel >= count) pokedexSel = count - 1;
+            }
+            if (IsKeyPressed(KEY_LEFT) || IsKeyPressed(KEY_A)) {
+                pokedexSel -= 10;
+                if (pokedexSel < 0) pokedexSel = 0;
+            }
+            /* 滚动跟随 */
+            if (pokedexSel < pokedexScroll) pokedexScroll = pokedexSel;
+            if (pokedexSel >= pokedexScroll + 16) pokedexScroll = pokedexSel - 15;
+            if (pokedexScroll < 0) pokedexScroll = 0;
+
+            /* 选择变化 → 重新加载预览贴图 */
+            if (pokedexSel != prevSel) {
+                if (pokedexSprite.id > 0) UnloadTexture(pokedexSprite);
+                pokedexSprite.id = 0;
+                pokedexLoadedId = -1;
+            }
+
+            /* ESC / P → 返回 */
+            if (IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_P)) {
+                if (pokedexSprite.id > 0) UnloadTexture(pokedexSprite);
+                pokedexSprite.id = 0;
+                pokedexLoadedId = -1;
+                currentState = GAME_WORLD;
+            }
+        } break;
+
         /* ========== 世界地图游玩 ========== */
         case GAME_WORLD:
         {
             float dt = GetFrameTime();
+
+            /* 按 B → 进入战斗测试 */
+            if (IsKeyPressed(KEY_B))
+            {
+                InitBattle(&battleCtx, fontCN);
+                currentState = GAME_BATTLE;
+                break;
+            }
+
+            /* 按 P → 打开宝可梦图鉴 */
+            if (IsKeyPressed(KEY_P))
+            {
+                pokedexSel = 0;
+                pokedexScroll = 0;
+                pokedexPrevState = currentState;
+                currentState = GAME_POKEDEX;
+                break;
+            }
 
             /* 按 ESC → 返回标题界面 */
             if (IsKeyPressed(KEY_ESCAPE))
@@ -486,6 +591,204 @@ void DrawGame(void)
 
         } break;
 
+        /* ========== 战斗界面 ========== */
+        case GAME_BATTLE:
+        {
+            DrawBattle(&battleCtx);
+        } break;
+
+        /* ========== 宝可梦图鉴 ========== */
+        case GAME_POKEDEX:
+        {
+            ClearBackground((Color){ 20, 24, 40, 255 });
+
+            int count = GetSpeciesCount();
+            int listW = 350;
+            int listX = 20;
+            int listY = 80;
+            int itemH = 32;
+            int visible = 16;
+
+            /* ---- 标题 ---- */
+            DrawTextEx(fontCN, "宝可梦图鉴",
+                       (Vector2){ listX, 20 }, 34, 1, (Color){ 255, 220, 100, 255 });
+            char info[64];
+            snprintf(info, sizeof(info), "共 %d 只   ↑↓浏览  P/ESC返回", count);
+            DrawTextEx(fontCN, info,
+                       (Vector2){ listX, 56 }, 16, 1, (Color){ 160, 160, 180, 255 });
+
+            /* ---- 左侧列表背景 ---- */
+            DrawRectangle(listX - 8, listY - 8, listW + 16, visible * itemH + 16,
+                          (Color){ 0, 0, 0, 150 });
+            DrawRectangleLinesEx((Rectangle){ listX - 8, listY - 8, listW + 16, visible * itemH + 16 },
+                                 2, (Color){ 80, 80, 120, 255 });
+
+            /* ---- 列表项 ---- */
+            for (int i = 0; i < visible && (i + pokedexScroll) < count; i++) {
+                int idx = i + pokedexScroll;
+                const SpeciesData *sp = GetSpeciesByIndex(idx);
+                if (!sp) continue;
+
+                float iy = listY + i * itemH;
+                bool sel = (idx == pokedexSel);
+
+                if (sel) {
+                    DrawRectangle(listX - 4, iy, listW, itemH,
+                                  (Color){ 60, 100, 200, 220 });
+                }
+
+                char line[64];
+                snprintf(line, sizeof(line), "%03d  %s", sp->id, sp->name);
+                DrawTextEx(fontCN, line,
+                           (Vector2){ listX + 8, iy + 4 }, 20, 1,
+                           sel ? (Color){ 255, 255, 160, 255 } : (Color){ 220, 220, 240, 255 });
+            }
+
+            /* ---- 滚动条 ---- */
+            if (count > visible) {
+                float barH = (float)visible / count * (visible * itemH);
+                float barY = listY + (float)pokedexScroll / count * (visible * itemH);
+                DrawRectangle(listX + listW + 4, barY, 6, barH, (Color){ 100, 100, 200, 180 });
+            }
+
+            /* ---- 右侧详情面板 ---- */
+            const SpeciesData *sel = GetSpeciesByIndex(pokedexSel);
+            if (sel) {
+                int rx = 400;
+                int ry = 70;
+
+                /* 面板背景 */
+                Rectangle panel = { rx, ry, 540, 540 };
+                DrawRectangleRec(panel, (Color){ 0, 0, 0, 150 });
+                DrawRectangleLinesEx(panel, 2, (Color){ 80, 80, 120, 255 });
+
+                int px = rx + 24;
+
+                /* 编号 + 名字 */
+                char buf[64];
+                snprintf(buf, sizeof(buf), "No.%03d  %s", sel->id, sel->name);
+                DrawTextEx(fontCN, buf, (Vector2){ px, ry + 12 }, 32, 1,
+                           (Color){ 255, 220, 100, 255 });
+
+                /* 分割线 */
+                DrawLineEx((Vector2){ px, ry + 52 }, (Vector2){ rx + 520, ry + 52 },
+                           1, (Color){ 100, 100, 140, 200 });
+
+                /* 属性 */
+                snprintf(buf, sizeof(buf), "属性: %s",
+                         TypeToChinese(sel->type1));
+                DrawTextEx(fontCN, buf, (Vector2){ px, ry + 65 }, 22, 1,
+                           (Color){ 100, 200, 255, 255 });
+                if (sel->type2 != TYPE_NONE) {
+                    snprintf(buf, sizeof(buf), " / %s", TypeToChinese(sel->type2));
+                    DrawTextEx(fontCN, buf, (Vector2){ px + 120, ry + 65 }, 22, 1,
+                               (Color){ 100, 200, 255, 255 });
+                }
+
+                /* 分割线 */
+                DrawLineEx((Vector2){ px, ry + 92 }, (Vector2){ rx + 520, ry + 92 },
+                           1, (Color){ 100, 100, 140, 200 });
+
+                /* ---- 六项种族值 (每行一条, 带进度条) ---- */
+                if (sel->hasRealStats) {
+                    int statY = ry + 105;
+                    const char *labels[] = { "HP", "攻击", "防御", "特攻", "特防", "速度" };
+                    int values[] = {
+                        sel->baseStats.hp, sel->baseStats.attack, sel->baseStats.defense,
+                        sel->baseStats.sp_attack, sel->baseStats.sp_defense, sel->baseStats.speed
+                    };
+                    /* 颜色: HP绿, 攻击红, 防御黄, 特攻蓝, 特防青, 速度粉 */
+                    Color sc[] = {
+                        { 80, 220, 80, 255 }, { 240, 80, 60, 255 }, { 240, 200, 40, 255 },
+                        { 60, 140, 240, 255 }, { 60, 200, 200, 255 }, { 240, 140, 200, 255 }
+                    };
+
+                    for (int s = 0; s < 6; s++) {
+                        DrawTextEx(fontCN, labels[s],
+                                   (Vector2){ px, statY + s * 42 }, 22, 1,
+                                   (Color){ 200, 200, 220, 255 });
+
+                        /* 数值 */
+                        char valStr[8];
+                        snprintf(valStr, sizeof(valStr), "%d", values[s]);
+                        DrawTextEx(fontCN, valStr,
+                                   (Vector2){ px + 80, statY + s * 42 }, 22, 1,
+                                   (Color){ 255, 255, 255, 255 });
+
+                        /* 进度条背景 */
+                        Rectangle barBg = { px + 130, statY + s * 42 + 6, 340, 14 };
+                        DrawRectangleRec(barBg, (Color){ 60, 60, 80, 255 });
+                        /* 进度条填充 (最大 255 为参考) */
+                        float frac = (float)values[s] / 255.0f;
+                        if (frac > 1.0f) frac = 1.0f;
+                        if (frac < 0.01f) frac = 0.01f;
+                        Rectangle barFill = { px + 131, statY + s * 42 + 7, 338 * frac, 12 };
+                        DrawRectangleRec(barFill, sc[s]);
+                    }
+
+                    /* 种族值总和 */
+                    int totalY = ry + 105 + 6 * 42 + 10;
+                    DrawLineEx((Vector2){ px, totalY - 6 }, (Vector2){ rx + 520, totalY - 6 },
+                               1, (Color){ 100, 100, 140, 200 });
+                    int total = TotalBaseStats(sel);
+                    snprintf(buf, sizeof(buf), "种族值总和: %d", total);
+                    DrawTextEx(fontCN, buf,
+                               (Vector2){ px, totalY + 4 }, 24, 1,
+                               (Color){ 255, 220, 100, 255 });
+                } else {
+                    DrawTextEx(fontCN, "(无种族值数据)",
+                               (Vector2){ px, ry + 105 }, 20, 1,
+                               (Color){ 160, 160, 180, 255 });
+                }
+
+                /* ---- 配招 ---- */
+                int moveY = ry + 400;
+                if (sel->moveCount > 0) {
+                    DrawTextEx(fontCN, "配招:",
+                               (Vector2){ px, moveY }, 20, 1,
+                               (Color){ 180, 180, 200, 255 });
+                    for (int m = 0; m < sel->moveCount; m++) {
+                        const MoveData *md = GetMoveData(sel->moveNames[m]);
+                        char mstr[128];
+                        if (md) {
+                            snprintf(mstr, sizeof(mstr), "%s  威力:%d  命中:%d  PP:%d",
+                                     sel->moveNames[m], md->power, md->accuracy, md->maxPP);
+                        } else {
+                            snprintf(mstr, sizeof(mstr), "%s  (技能库未收录)",
+                                     sel->moveNames[m]);
+                        }
+                        DrawTextEx(fontCN, mstr,
+                                   (Vector2){ px + 20, moveY + 28 + m * 26 }, 18, 1,
+                                   (Color){ 220, 240, 220, 255 });
+                    }
+                }
+
+                /* 精灵预览 (按需加载, 切换时才重新加载) */
+                if (pokedexLoadedId != sel->id) {
+                    if (pokedexSprite.id > 0) UnloadTexture(pokedexSprite);
+                    pokedexSprite.id = 0;
+                    pokedexLoadedId = sel->id;
+
+                    char spritePath[64];
+                    snprintf(spritePath, sizeof(spritePath), "assets/images/front/front_%d.png", sel->id);
+                    if (FileExists(spritePath)) {
+                        Image img = LoadImage(spritePath);
+                        if (img.data) {
+                            ImageResize(&img, img.width * 3, img.height * 3);
+                            pokedexSprite = LoadTextureFromImage(img);
+                            SetTextureFilter(pokedexSprite, TEXTURE_FILTER_POINT);
+                            UnloadImage(img);
+                        }
+                    }
+                }
+                if (pokedexSprite.id > 0) {
+                    Rectangle src = { 0, 0, (float)pokedexSprite.width, (float)pokedexSprite.height };
+                    Rectangle dst = { rx + 380, ry + 10, 144, 144 };
+                    DrawTexturePro(pokedexSprite, src, dst, (Vector2){ 0, 0 }, 0.0f, WHITE);
+                }
+            }
+        } break;
+
         /* ========== 世界地图游玩 ========== */
         case GAME_WORLD:
         {
@@ -530,6 +833,13 @@ void CloseGame(void)
     if (currentState == GAME_WORLD) {
         UnloadMap(&worldMap);
     }
+    if (currentState == GAME_BATTLE) {
+        CloseBattle(&battleCtx);
+    }
+    if (pokedexSprite.id > 0) {
+        UnloadTexture(pokedexSprite);
+    }
+    UnloadPokemonDB();         /* 释放宝可梦数据库 */
     UnloadTexture(masterTex);  /* 卸载人物纹理 */
     UnloadFont(fontCN);        /* 卸载中文字体 */
 }
