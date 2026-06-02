@@ -22,6 +22,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <time.h>
 
 /* ======================== 屏幕与布局常量 ======================== */
 
@@ -116,9 +117,19 @@ typedef struct {
     int  level;             /**< 等级 */
     int  hp_current;        /**< 当前 HP */
     int  hp_max;            /**< 最大 HP */
+    int  attack;            /**< 攻击 */
+    int  defense;           /**< 防御 */
+    int  sp_attack;         /**< 特攻 */
+    int  sp_defense;        /**< 特防 */
+    int  speed;             /**< 速度 */
+    int  type1;             /**< 第一属性 */
+    int  type2;             /**< 第二属性 */
     int  exp_current;       /**< 当前经验值 */
     int  exp_max;           /**< 升级所需经验值 */
     char moves[4][24];      /**< 4 个技能名称 */
+    int  move_power[4];     /**< 技能威力 */
+    int  move_type[4];      /**< 技能属性类型 */
+    int  move_accuracy[4];  /**< 技能命中率 */
     int  move_pp[4];        /**< 技能当前 PP */
     int  move_pp_max[4];    /**< 技能最大 PP */
     int  move_count;        /**< 实际技能数量 */
@@ -126,11 +137,6 @@ typedef struct {
 
 /**
  * @brief 战斗子状态 (回合内细分)
- * STATE_INTRO   - 开场 "野生的 XXX 出现了!"
- * STATE_COMMAND - 主菜单选择
- * STATE_FIGHT   - 技能选择
- * STATE_EXECUTE - 动画执行中
- * STATE_MESSAGE - 消息暂停等待按键
  */
 typedef enum {
     STATE_INTRO,
@@ -139,6 +145,100 @@ typedef enum {
     STATE_EXECUTE,
     STATE_MESSAGE,
 } BattleSubState;
+
+/* ======================== 属性克制表 ======================== */
+
+static float typeChart[19][19];
+
+static void InitTypeChart(void) {
+    for (int i = 0; i < 19; i++)
+        for (int j = 0; j < 19; j++)
+            typeChart[i][j] = 1.0f;
+
+    typeChart[TYPE_NORMAL][TYPE_ROCK]  = 0.5f; typeChart[TYPE_NORMAL][TYPE_GHOST] = 0.0f; typeChart[TYPE_NORMAL][TYPE_STEEL] = 0.5f;
+    typeChart[TYPE_FIRE][TYPE_FIRE]    = 0.5f; typeChart[TYPE_FIRE][TYPE_WATER]   = 0.5f; typeChart[TYPE_FIRE][TYPE_GRASS]   = 2.0f;
+    typeChart[TYPE_FIRE][TYPE_ICE]     = 2.0f; typeChart[TYPE_FIRE][TYPE_BUG]      = 2.0f; typeChart[TYPE_FIRE][TYPE_ROCK]    = 0.5f;
+    typeChart[TYPE_FIRE][TYPE_DRAGON]  = 0.5f; typeChart[TYPE_FIRE][TYPE_STEEL]    = 2.0f;
+    typeChart[TYPE_WATER][TYPE_FIRE]   = 2.0f; typeChart[TYPE_WATER][TYPE_WATER]   = 0.5f; typeChart[TYPE_WATER][TYPE_GRASS]   = 0.5f;
+    typeChart[TYPE_WATER][TYPE_GROUND] = 2.0f; typeChart[TYPE_WATER][TYPE_ROCK]    = 2.0f; typeChart[TYPE_WATER][TYPE_DRAGON]  = 0.5f;
+    typeChart[TYPE_GRASS][TYPE_FIRE]   = 0.5f; typeChart[TYPE_GRASS][TYPE_WATER]   = 2.0f; typeChart[TYPE_GRASS][TYPE_GRASS]   = 0.5f;
+    typeChart[TYPE_GRASS][TYPE_POISON] = 0.5f; typeChart[TYPE_GRASS][TYPE_GROUND]  = 2.0f; typeChart[TYPE_GRASS][TYPE_FLYING]  = 0.5f;
+    typeChart[TYPE_GRASS][TYPE_BUG]    = 0.5f; typeChart[TYPE_GRASS][TYPE_ROCK]    = 2.0f; typeChart[TYPE_GRASS][TYPE_DRAGON]  = 0.5f;
+    typeChart[TYPE_GRASS][TYPE_STEEL]  = 0.5f;
+    typeChart[TYPE_ELECTRIC][TYPE_WATER]=2.0f; typeChart[TYPE_ELECTRIC][TYPE_GRASS]=0.5f; typeChart[TYPE_ELECTRIC][TYPE_ELECTRIC]=0.5f;
+    typeChart[TYPE_ELECTRIC][TYPE_GROUND]=0.0f;typeChart[TYPE_ELECTRIC][TYPE_FLYING]=2.0f;typeChart[TYPE_ELECTRIC][TYPE_DRAGON]=0.5f;
+    typeChart[TYPE_ICE][TYPE_FIRE]     = 0.5f; typeChart[TYPE_ICE][TYPE_WATER]     = 0.5f; typeChart[TYPE_ICE][TYPE_GRASS]     = 2.0f;
+    typeChart[TYPE_ICE][TYPE_ICE]      = 0.5f; typeChart[TYPE_ICE][TYPE_GROUND]    = 2.0f; typeChart[TYPE_ICE][TYPE_FLYING]    = 2.0f;
+    typeChart[TYPE_ICE][TYPE_DRAGON]   = 2.0f; typeChart[TYPE_ICE][TYPE_STEEL]     = 0.5f;
+    typeChart[TYPE_FIGHTING][TYPE_NORMAL]=2.0f;typeChart[TYPE_FIGHTING][TYPE_ICE]  =2.0f; typeChart[TYPE_FIGHTING][TYPE_POISON]=0.5f;
+    typeChart[TYPE_FIGHTING][TYPE_FLYING]=0.5f;typeChart[TYPE_FIGHTING][TYPE_PSYCHIC]=0.5f;typeChart[TYPE_FIGHTING][TYPE_BUG] =0.5f;
+    typeChart[TYPE_FIGHTING][TYPE_ROCK]=2.0f; typeChart[TYPE_FIGHTING][TYPE_GHOST] =0.0f; typeChart[TYPE_FIGHTING][TYPE_DARK] =2.0f;
+    typeChart[TYPE_FIGHTING][TYPE_STEEL]=2.0f;typeChart[TYPE_FIGHTING][TYPE_FAIRY] =0.5f;
+    typeChart[TYPE_POISON][TYPE_GRASS] =2.0f; typeChart[TYPE_POISON][TYPE_POISON]  =0.5f; typeChart[TYPE_POISON][TYPE_GROUND] =0.5f;
+    typeChart[TYPE_POISON][TYPE_ROCK]  =0.5f; typeChart[TYPE_POISON][TYPE_GHOST]   =0.5f; typeChart[TYPE_POISON][TYPE_STEEL]  =0.0f;
+    typeChart[TYPE_POISON][TYPE_FAIRY] =2.0f;
+    typeChart[TYPE_GROUND][TYPE_FIRE]  =2.0f; typeChart[TYPE_GROUND][TYPE_GRASS]   =0.5f; typeChart[TYPE_GROUND][TYPE_ELECTRIC]=2.0f;
+    typeChart[TYPE_GROUND][TYPE_POISON]=2.0f; typeChart[TYPE_GROUND][TYPE_FLYING]   =0.0f; typeChart[TYPE_GROUND][TYPE_BUG]    =0.5f;
+    typeChart[TYPE_GROUND][TYPE_ROCK]  =2.0f; typeChart[TYPE_GROUND][TYPE_STEEL]    =2.0f;
+    typeChart[TYPE_FLYING][TYPE_GRASS] =2.0f; typeChart[TYPE_FLYING][TYPE_ELECTRIC] =0.5f; typeChart[TYPE_FLYING][TYPE_FIGHTING]=2.0f;
+    typeChart[TYPE_FLYING][TYPE_BUG]   =2.0f; typeChart[TYPE_FLYING][TYPE_ROCK]     =0.5f; typeChart[TYPE_FLYING][TYPE_STEEL]   =0.5f;
+    typeChart[TYPE_PSYCHIC][TYPE_FIGHTING]=2.0f;typeChart[TYPE_PSYCHIC][TYPE_POISON]=2.0f; typeChart[TYPE_PSYCHIC][TYPE_PSYCHIC]=0.5f;
+    typeChart[TYPE_PSYCHIC][TYPE_DARK] =0.0f; typeChart[TYPE_PSYCHIC][TYPE_STEEL]   =0.5f;
+    typeChart[TYPE_BUG][TYPE_FIRE]     =0.5f; typeChart[TYPE_BUG][TYPE_GRASS]       =2.0f; typeChart[TYPE_BUG][TYPE_FIGHTING]  =0.5f;
+    typeChart[TYPE_BUG][TYPE_POISON]   =0.5f; typeChart[TYPE_BUG][TYPE_FLYING]      =0.5f; typeChart[TYPE_BUG][TYPE_PSYCHIC]   =2.0f;
+    typeChart[TYPE_BUG][TYPE_GHOST]    =0.5f; typeChart[TYPE_BUG][TYPE_DARK]        =2.0f; typeChart[TYPE_BUG][TYPE_STEEL]     =0.5f;
+    typeChart[TYPE_BUG][TYPE_FAIRY]    =0.5f;
+    typeChart[TYPE_ROCK][TYPE_FIRE]    =2.0f; typeChart[TYPE_ROCK][TYPE_ICE]        =2.0f; typeChart[TYPE_ROCK][TYPE_FIGHTING]  =0.5f;
+    typeChart[TYPE_ROCK][TYPE_GROUND]  =0.5f; typeChart[TYPE_ROCK][TYPE_FLYING]     =2.0f; typeChart[TYPE_ROCK][TYPE_BUG]       =2.0f;
+    typeChart[TYPE_ROCK][TYPE_STEEL]   =0.5f;
+    typeChart[TYPE_GHOST][TYPE_NORMAL] =0.0f; typeChart[TYPE_GHOST][TYPE_PSYCHIC]   =2.0f; typeChart[TYPE_GHOST][TYPE_GHOST]    =2.0f;
+    typeChart[TYPE_GHOST][TYPE_DARK]   =0.5f;
+    typeChart[TYPE_DRAGON][TYPE_DRAGON]=2.0f; typeChart[TYPE_DRAGON][TYPE_STEEL]     =0.5f; typeChart[TYPE_DRAGON][TYPE_FAIRY]   =0.0f;
+    typeChart[TYPE_DARK][TYPE_FIGHTING]=0.5f; typeChart[TYPE_DARK][TYPE_PSYCHIC]     =2.0f; typeChart[TYPE_DARK][TYPE_GHOST]      =2.0f;
+    typeChart[TYPE_DARK][TYPE_DARK]    =0.5f; typeChart[TYPE_DARK][TYPE_FAIRY]       =0.5f;
+    typeChart[TYPE_STEEL][TYPE_FIRE]   =0.5f; typeChart[TYPE_STEEL][TYPE_WATER]      =0.5f; typeChart[TYPE_STEEL][TYPE_ELECTRIC]  =0.5f;
+    typeChart[TYPE_STEEL][TYPE_ICE]    =2.0f; typeChart[TYPE_STEEL][TYPE_ROCK]       =2.0f; typeChart[TYPE_STEEL][TYPE_STEEL]     =0.5f;
+    typeChart[TYPE_STEEL][TYPE_FAIRY]  =2.0f;
+    typeChart[TYPE_FAIRY][TYPE_FIRE]   =0.5f; typeChart[TYPE_FAIRY][TYPE_FIGHTING]   =2.0f; typeChart[TYPE_FAIRY][TYPE_POISON]    =0.5f;
+    typeChart[TYPE_FAIRY][TYPE_DRAGON] =2.0f; typeChart[TYPE_FAIRY][TYPE_DARK]       =2.0f; typeChart[TYPE_FAIRY][TYPE_STEEL]     =0.5f;
+}
+
+static int typeChartInited = 0;
+
+/** 获取属性相克倍率 */
+static float GetTypeMultiplier(int atkType, int defType1, int defType2) {
+    if (!typeChartInited) { InitTypeChart(); typeChartInited = 1; }
+    float m = typeChart[atkType][defType1];
+    if (defType2 != TYPE_NONE) m *= typeChart[atkType][defType2];
+    return m;
+}
+
+/** 计算技能伤害 */
+static int CalcBattleDamage(LocalPokemon *attacker, LocalPokemon *defender,
+                            int moveIdx, float *outMultiplier, int *outCritical) {
+    int power = attacker->move_power[moveIdx];
+    if (power == 0) { *outMultiplier = 1.0f; *outCritical = 0; return 0; }
+
+    /* 物理/特殊判定 */
+    int mt = attacker->move_type[moveIdx];
+    int isSpecial = (mt == TYPE_FIRE || mt == TYPE_WATER || mt == TYPE_ELECTRIC ||
+                     mt == TYPE_GRASS || mt == TYPE_ICE || mt == TYPE_PSYCHIC ||
+                     mt == TYPE_DRAGON || mt == TYPE_DARK);
+    int atk = isSpecial ? attacker->sp_attack : attacker->attack;
+    int def = isSpecial ? defender->sp_defense : defender->defense;
+
+    float mult = GetTypeMultiplier(mt, defender->type1, defender->type2);
+    *outMultiplier = mult;
+    if (mult == 0.0f) { *outCritical = 0; return 0; }
+
+    int base = (int)(((2.0f * attacker->level / 5.0f + 2.0f) * power * atk / def) / 50.0f) + 2;
+    int rnd = 85 + (rand() % 16);
+    *outCritical = (rand() % 16 == 0);
+    float critMult = *outCritical ? 1.5f : 1.0f;
+    int dmg = (int)((float)base * mult * (rnd / 100.0f) * critMult);
+    if (dmg < 1) dmg = 1;
+    return dmg;
+}
 
 /* ======================== 全局变量 ======================== */
 
@@ -252,12 +352,13 @@ static void LoadBattleResources(void) {
 
     /* 精灵: 通过 Image 方式加载以兼容 4-bit colormap PNG */
     /* 对手 — 正面精灵 (3x 放大 = 192×192) */
-    if (FileExists("assets/images/front/front_250.png")) {
-        LoadSprite(&texEnemyPokemon, "assets/images/front/front_250.png", 3);
+    /* 对手 — 化石翼龙 (#2) 正面 */
+    if (FileExists("assets/images/front/front_2.png")) {
+        LoadSprite(&texEnemyPokemon, "assets/images/front/front_2.png", 3);
     }
-    /* 己方 — 背面精灵 (3.5x 放大 = 224×224) */
-    if (FileExists("assets/images/back/back_248.png")) {
-        LoadSprite(&texPlayerPokemon, "assets/images/back/back_248.png", 3);
+    /* 己方 — 阿勃梭鲁 (#1) 背面 */
+    if (FileExists("assets/images/back/back_1.png")) {
+        LoadSprite(&texPlayerPokemon, "assets/images/back/back_1.png", 3);
     }
 
     /* 站台贴图 —— 白底抠图, 灰度图转带 Alpha 的阴影 */
@@ -307,8 +408,7 @@ static void LoadBattleResources(void) {
         SetTextureFilter(texPlayerInfoBar, TEXTURE_FILTER_POINT);
     }
 
-    /* 字体由 game.c 传入, 此处仅标记 */
-    hasFont = false;
+    /* hasFont 由 InitBattle 设置, 此处不再覆盖 */
 }
 
 /**
@@ -347,14 +447,22 @@ static void InitPokemonFromDB(LocalPokemon *p, int speciesId, int level) {
 
     strcpy(p->name, sp->name);
     p->level = level;
+    p->type1 = sp->type1;
+    p->type2 = sp->type2;
     p->move_count = 0;
 
     if (sp->hasRealStats) {
-        p->hp_max     = CalcStat(sp->baseStats.hp,         level, 1);
-        p->hp_current = p->hp_max;
+        p->hp_max      = CalcStat(sp->baseStats.hp,         level, 1);
+        p->attack      = CalcStat(sp->baseStats.attack,     level, 0);
+        p->defense     = CalcStat(sp->baseStats.defense,    level, 0);
+        p->sp_attack   = CalcStat(sp->baseStats.sp_attack,  level, 0);
+        p->sp_defense  = CalcStat(sp->baseStats.sp_defense, level, 0);
+        p->speed       = CalcStat(sp->baseStats.speed,      level, 0);
+        p->hp_current  = p->hp_max;
     } else {
         p->hp_max     = 45 + (speciesId % 20) * 3 + level * 2;
         p->hp_current = p->hp_max;
+        p->attack = p->defense = p->sp_attack = p->sp_defense = p->speed = 50 + level;
     }
     p->exp_current = 0;
     p->exp_max = level * level * level;
@@ -363,19 +471,22 @@ static void InitPokemonFromDB(LocalPokemon *p, int speciesId, int level) {
         const MoveData *md = GetMoveData(sp->moveNames[i]);
         if (md) {
             strcpy(p->moves[p->move_count], md->name);
-            p->move_pp[p->move_count] = md->maxPP;
-            p->move_pp_max[p->move_count] = md->maxPP;
+            p->move_power[p->move_count]    = md->power;
+            p->move_type[p->move_count]     = md->type;
+            p->move_accuracy[p->move_count] = md->accuracy;
+            p->move_pp[p->move_count]       = md->maxPP;
+            p->move_pp_max[p->move_count]   = md->maxPP;
             p->move_count++;
         }
     }
 }
 
 static void InitBattleData(void) {
-    /* 己方: 喷火龙 (#6) Lv36 */
-    InitPokemonFromDB(&playerPoke, 6, 36);
+    /* 己方: 阿勃梭鲁 (#1) Lv30 */
+    InitPokemonFromDB(&playerPoke, 1, 30);
 
-    /* 对手: 杰尼龟 (#7) Lv10 */
-    InitPokemonFromDB(&enemyPoke, 7, 10);
+    /* 对手: 化石翼龙 (#2) Lv28 */
+    InitPokemonFromDB(&enemyPoke, 2, 28);
 
     snprintf(messageText, sizeof(messageText), "野生的 %s 出现了!", enemyPoke.name);
     subState = STATE_INTRO;
@@ -477,12 +588,9 @@ static void UpdateBattleLogic(void) {
                     break;
                 }
 
-                /* 扣减 PP, 记录招式文本和模拟伤害 */
+                /* 扣减 PP, 记录技能索引 */
                 playerPoke.move_pp[cursorPos]--;
-                snprintf(messageText, sizeof(messageText), "%s 使用了 %s!",
-                         playerPoke.name, playerPoke.moves[cursorPos]);
-                int baseDmg[] = { 30, 25, 40, 30 };
-                storedDamage = baseDmg[cursorPos];
+                storedDamage = cursorPos;  /* 存技能索引, 而非伤害值 */
                 subState = STATE_EXECUTE;
                 animPhase = 0;
                 animTimer = 0;
@@ -499,54 +607,113 @@ static void UpdateBattleLogic(void) {
         case STATE_EXECUTE:
             animTimer++;
             if (animPhase == 0) {
-                /* phase 0: 显示招式文本 40 帧后扣血 */
-                if (animTimer > 40) {
-                    enemyPoke.hp_current -= storedDamage;
+                /* phase 0: 玩家回合 — 检查命中 */
+                if (animTimer > 30) {
+                    int moveIdx = storedDamage;
+                    int acc = playerPoke.move_accuracy[moveIdx];
+                    int hit = (rand() % 100) < acc;
+
+                    if (!hit) {
+                        snprintf(messageText, sizeof(messageText), "%s 使用了 %s，但是没有命中!",
+                                 playerPoke.name, playerPoke.moves[moveIdx]);
+                        /* 未命中 → 直接对手回合 */
+                        animPhase = 2; animTimer = 0;
+                        goto enemyTurn;
+                    }
+
+                    /* 计算伤害 */
+                    float typeMult; int crit;
+                    int dmg = CalcBattleDamage(&playerPoke, &enemyPoke, moveIdx, &typeMult, &crit);
+
+                    /* 构建消息 */
+                    char extra[128] = "";
+                    if (typeMult == 0.0f)
+                        strcat(extra, " 没有效果...");
+                    else if (typeMult >= 2.0f)
+                        strcat(extra, " 效果拔群!");
+                    else if (typeMult < 1.0f)
+                        strcat(extra, " 效果不太好...");
+                    if (crit) strcat(extra, " 暴击!");
+
+                    enemyPoke.hp_current -= dmg;
                     if (enemyPoke.hp_current < 0) enemyPoke.hp_current = 0;
+
+                    snprintf(messageText, sizeof(messageText), "%s 使用了 %s! 造成 %d 点伤害!%s",
+                             playerPoke.name, playerPoke.moves[moveIdx], dmg, extra);
                     animPhase = 1;
                     animTimer = 0;
                 }
             } else if (animPhase == 1) {
-                /* phase 1: HP 条减少动画 30 帧, 检查对手是否倒下 */
+                /* phase 1: 停顿, 检查敌方是否倒下 */
                 if (animTimer > 30) {
                     if (enemyPoke.hp_current <= 0) {
-                        snprintf(messageText, sizeof(messageText), "野生的 %s 倒下了!", enemyPoke.name);
+                        snprintf(messageText, sizeof(messageText), "野生的 %s 倒下了! 你赢了!", enemyPoke.name);
                         subState = STATE_MESSAGE;
                         battleFinished = true;
                     } else {
-                        /* 对手存活 → 对手反击 */
+enemyTurn:
+                        /* 敌方选择技能 (优先高威力) */
                         animPhase = 2;
                         animTimer = 0;
-                        int moveIdx = 0;
+                        int best = 0, bestPow = 0;
                         for (int i = 0; i < enemyPoke.move_count; i++) {
-                            if (enemyPoke.move_pp[i] > 0) { moveIdx = i; break; }
+                            if (enemyPoke.move_pp[i] > 0 && enemyPoke.move_power[i] > bestPow) {
+                                bestPow = enemyPoke.move_power[i]; best = i;
+                            }
                         }
-                        snprintf(messageText, sizeof(messageText), "野生的 %s 使用了 %s!",
-                                 enemyPoke.name, enemyPoke.moves[moveIdx]);
+                        if (bestPow == 0)
+                            for (int i = 0; i < enemyPoke.move_count; i++)
+                                if (enemyPoke.move_pp[i] > 0) { best = i; break; }
+                        enemyPoke.move_pp[best]--;
+                        storedDamage = best;
+
+                        /* 敌方命中判定 */
+                        int eAcc = enemyPoke.move_accuracy[best];
+                        if ((rand() % 100) >= eAcc) {
+                            snprintf(messageText, sizeof(messageText), "野生的 %s 使用了 %s，但是没有命中!",
+                                     enemyPoke.name, enemyPoke.moves[best]);
+                            animPhase = 4; animTimer = 0;
+                        } else {
+                            float eMult; int eCrit;
+                            int eDmg = CalcBattleDamage(&enemyPoke, &playerPoke, best, &eMult, &eCrit);
+                            char eExtra[128] = "";
+                            if (eMult == 0.0f) strcat(eExtra, " 没有效果...");
+                            else if (eMult >= 2.0f) strcat(eExtra, " 效果拔群!");
+                            else if (eMult < 1.0f) strcat(eExtra, " 效果不太好...");
+                            if (eCrit) strcat(eExtra, " 暴击!");
+
+                            playerPoke.hp_current -= eDmg;
+                            if (playerPoke.hp_current < 0) playerPoke.hp_current = 0;
+
+                            snprintf(messageText, sizeof(messageText), "野生的 %s 使用了 %s! 造成 %d 点伤害!%s",
+                                     enemyPoke.name, enemyPoke.moves[best], eDmg, eExtra);
+                        }
                     }
                 }
             } else if (animPhase == 2) {
-                /* phase 2: 显示对手招式文本 40 帧后扣血 */
+                /* phase 2: 敌方技能文本 40 帧 */
                 if (animTimer > 40) {
-                    int enemyDmg = 35;  /* 对手固定伤害 */
-                    playerPoke.hp_current -= enemyDmg;
-                    if (playerPoke.hp_current < 0) playerPoke.hp_current = 0;
-                    animPhase = 3;
-                    animTimer = 0;
+                    animPhase = 3; animTimer = 0;
                 }
             } else if (animPhase == 3) {
-                /* phase 3: 对手伤害动画 30 帧, 检查己方是否倒下 */
+                /* phase 3: 敌方伤害停顿 */
                 if (animTimer > 30) {
                     if (playerPoke.hp_current <= 0) {
-                        snprintf(messageText, sizeof(messageText), "%s 倒下了!", playerPoke.name);
+                        snprintf(messageText, sizeof(messageText), "%s 倒下了! 你输了...", playerPoke.name);
                         battleFinished = true;
                         subState = STATE_MESSAGE;
                     } else {
-                        /* 双方存活 → 回到主菜单, 开始下一回合 */
                         subState = STATE_COMMAND;
                         cursorPos = 0;
                         snprintf(messageText, sizeof(messageText), "%s 要做什么?", playerPoke.name);
                     }
+                }
+            } else if (animPhase == 4) {
+                /* phase 4: 敌方未命中停顿 */
+                if (animTimer > 30) {
+                    subState = STATE_COMMAND;
+                    cursorPos = 0;
+                    snprintf(messageText, sizeof(messageText), "%s 要做什么?", playerPoke.name);
                 }
             }
             break;
@@ -941,6 +1108,16 @@ static void DrawMessageBox(void) {
     } else {
         DrawText(messageText, TEXTBOX_X + 20, TEXTBOX_Y + 28, 26, WHITE);
     }
+
+    /* 右下角闪烁提示: 状态为 INTRO/MESSAGE 时显示 "▼" */
+    if (subState == STATE_INTRO || subState == STATE_MESSAGE) {
+        int frame = (int)(GetTime() * 2) % 2;  /* 0.5秒间隔闪烁 */
+        if (frame == 0 && hasFont) {
+            DrawTextEx(fontBattle, "▼",
+                       (Vector2){ TEXTBOX_X + TEXTBOX_W - 40, TEXTBOX_Y + TEXTBOX_H - 40 },
+                       22, 1, (Color){ 255, 255, 200, 255 });
+        }
+    }
 }
 
 /* ======================== 公共接口 (由 game.c 调用) ======================== */
@@ -957,6 +1134,8 @@ static void DrawMessageBox(void) {
  */
 void InitBattle(BattleContext *bc, Font font) {
     (void)bc;
+
+    srand((unsigned int)time(NULL));  /* 随机种子 */
 
     fontBattle = font;
     hasFont = (font.texture.id > 0);
@@ -1002,7 +1181,15 @@ void DrawBattle(BattleContext *bc) {
     DrawEnemyInfoPanel();
     DrawPlayerInfoPanel();
 
-    /* 第 5 层: 底部 UI (根据子状态切换) */
+    /* 第 5 层: 底部 UI 覆盖层 (先画, 让文字在它上面) */
+    if (texBattleUI.id > 0) {
+        DrawTexturePro(texBattleUI,
+            (Rectangle){ 0, 0, (float)texBattleUI.width, (float)texBattleUI.height },
+            (Rectangle){ 0, 500, SCREEN_W, 140 },
+            (Vector2){ 0, 0 }, 0.0f, WHITE);
+    }
+
+    /* 第 6 层: 文字层 (画在 UI 覆盖层上面) */
     switch (subState) {
         case STATE_INTRO:
         case STATE_MESSAGE:
@@ -1018,14 +1205,6 @@ void DrawBattle(BattleContext *bc) {
         case STATE_EXECUTE:
             DrawMessageBox();
             break;
-    }
-
-    /* 第 6 层: 底部 UI 覆盖层 (紧贴精灵下方) */
-    if (texBattleUI.id > 0) {
-        DrawTexturePro(texBattleUI,
-            (Rectangle){ 0, 0, (float)texBattleUI.width, (float)texBattleUI.height },
-            (Rectangle){ 0, 500, SCREEN_W, 140 },
-            (Vector2){ 0, 0 }, 0.0f, WHITE);
     }
 }
 
