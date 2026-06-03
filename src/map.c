@@ -34,18 +34,93 @@ static const char *filenameFromPath(const char *path)
 static char g_mapDir[512] = "";
 
 /**
- * resolveFullPath - 拼接地图目录与相对路径，得到完整图片路径
+ * resolveFullPath - 拼接地图目录与 tileset 中引用的图片路径
  * @dst:          输出缓冲区
  * @dstSize:      缓冲区大小
- * @relativePath: 相对路径（仅提取文件名部分）
+ * @relativePath: tileset 中记录的图片路径（可能包含子目录）
  *
- * 例如 g_mapDir = "assets/maps"，relativePath = "../素材/foo.png"，
- * 结果为 "assets/maps/foo.png"。
+ * 例如 g_mapDir = "assets/maps"，relativePath = "sucai/foo.png"，
+ * 结果为 "assets/maps/sucai/foo.png"。
+ * 若路径以 "../" 开头，只取文件名部分（向上引用视为直接放在地图目录下）。
  */
 static void resolveFullPath(char *dst, size_t dstSize, const char *relativePath)
 {
-    const char *fname = filenameFromPath(relativePath);
-    snprintf(dst, dstSize, "%s/%s", g_mapDir, fname);
+    if (strncmp(relativePath, "../", 3) == 0) {
+        const char *fname = filenameFromPath(relativePath);
+        snprintf(dst, dstSize, "%s/%s", g_mapDir, fname);
+    } else {
+        snprintf(dst, dstSize, "%s/%s", g_mapDir, relativePath);
+    }
+}
+
+/* ========== 辅助：解析 tileset 文件（.tsx XML 或 .tsj JSON） ========== */
+
+/**
+ * parseTilesetFile - 解析 tileset 文件，提取 image 路径与元数据
+ * @filepath:  tileset 文件路径（.tsx 或 .tsj）
+ * @imagePath: 输出——image 相对路径
+ * @pathSize:  imagePath 缓冲区大小
+ * @cols:      输出——列数
+ * @tileW:     输出——瓦片宽度
+ * @tileH:     输出——瓦片高度
+ *
+ * 自动识别 XML 或 JSON 格式。
+ */
+static bool parseTilesetFile(const char *filepath, char *imagePath, size_t pathSize,
+                              int *cols, int *tileW, int *tileH)
+{
+    char *content = LoadFileText(filepath);
+    if (!content) return false;
+
+    bool ok = false;
+
+    /* JSON 格式（.tsj） */
+    if (strstr(filepath, ".tsj") || content[0] == '{')
+    {
+        cJSON *root = cJSON_Parse(content);
+        if (root)
+        {
+            cJSON *node;
+            if ((node = cJSON_GetObjectItem(root, "image")))
+                snprintf(imagePath, pathSize, "%s", node->valuestring);
+            if ((node = cJSON_GetObjectItem(root, "columns")))
+                *cols = node->valueint;
+            if ((node = cJSON_GetObjectItem(root, "tilewidth")))
+                *tileW = node->valueint;
+            if ((node = cJSON_GetObjectItem(root, "tileheight")))
+                *tileH = node->valueint;
+            cJSON_Delete(root);
+            ok = true;
+        }
+    }
+    /* XML 格式（.tsx） */
+    else
+    {
+        char *p;
+
+        if ((p = strstr(content, "columns=\"")))
+            *cols = atoi(p + 9);
+        if ((p = strstr(content, "tilewidth=\"")))
+            *tileW = atoi(p + 11);
+        if ((p = strstr(content, "tileheight=\"")))
+            *tileH = atoi(p + 12);
+        if ((p = strstr(content, "source=\"")))
+        {
+            p += 8;
+            char *end = strchr(p, '"');
+            if (end)
+            {
+                size_t len = end - p;
+                if (len >= pathSize) len = pathSize - 1;
+                memcpy(imagePath, p, len);
+                imagePath[len] = '\0';
+            }
+        }
+        ok = (*cols > 0);
+    }
+
+    UnloadFileText(content);
+    return ok;
 }
 
 /* ======================== 地图加载 ======================== */
@@ -142,20 +217,35 @@ Map LoadMap(const char *filepath)
                 }
             }
         }
-        /* 物品/碰撞对象层（objectgroup "item"） */
-        else if (strcmp(type, "objectgroup") == 0 && strcmp(name, "item") == 0) {
+        /* 玩家出生点层（objectgroup "player"） */
+        if (strcmp(type, "objectgroup") == 0 && strcmp(name, "player") == 0) {
+            cJSON *objects = cJSON_GetObjectItem(layer, "objects");
+            cJSON *obj = NULL;
+            cJSON_ArrayForEach(obj, objects) {
+                /* 跳过瓦片对象（有 gid 的占位标记），取第一个普通对象作出生点 */
+                if (cJSON_GetObjectItem(obj, "gid")) continue;
+                map.playerSpawn.x = (float)cJSON_GetObjectItem(obj, "x")->valuedouble;
+                map.playerSpawn.y = (float)cJSON_GetObjectItem(obj, "y")->valuedouble;
+                break;
+            }
+        }
+        /* 对象层（解析所有 objectgroup 层中的对象，player 层除外） */
+        else if (strcmp(type, "objectgroup") == 0 && strcmp(name, "player") != 0) {
             cJSON *objects = cJSON_GetObjectItem(layer, "objects");
             cJSON *obj = NULL;
             cJSON_ArrayForEach(obj, objects) {
                 if (map.objectCount >= MAX_MAP_OBJECTS) break;
                 MapObject *mo = &map.objects[map.objectCount];
 
+                /* 跳过带有 gid 的瓦片对象（玩家精灵表占位），不当作碰撞对象 */
+                if (cJSON_GetObjectItem(obj, "gid")) continue;
+
                 mo->rect.x      = (float)cJSON_GetObjectItem(obj, "x")->valuedouble;
                 mo->rect.y      = (float)cJSON_GetObjectItem(obj, "y")->valuedouble;
                 mo->rect.width  = (float)cJSON_GetObjectItem(obj, "width")->valuedouble;
                 mo->rect.height = (float)cJSON_GetObjectItem(obj, "height")->valuedouble;
 
-                /* 从 properties 中提取对象类型（如 solid/stairs） */
+                /* 从 properties 中提取对象类型（如 solid/stairs/door） */
                 cJSON *props = cJSON_GetObjectItem(obj, "properties");
                 if (props && cJSON_IsArray(props)) {
                     cJSON *prop = NULL;
@@ -171,55 +261,78 @@ Map LoadMap(const char *filepath)
                 map.objectCount++;
             }
         }
-        /* 玩家出生点层（objectgroup "player"） */
-        else if (strcmp(type, "objectgroup") == 0 && strcmp(name, "player") == 0) {
-            cJSON *objects = cJSON_GetObjectItem(layer, "objects");
-            cJSON *obj = NULL;
-            bool firstPlayer = true;
-            cJSON_ArrayForEach(obj, objects) {
-                if (firstPlayer) {
-                    map.playerSpawn.x = (float)cJSON_GetObjectItem(obj, "x")->valuedouble;
-                    map.playerSpawn.y = (float)cJSON_GetObjectItem(obj, "y")->valuedouble;
-                    firstPlayer = false;
-                }
-            }
-        }
     }
 
-    /* --- 加载 tileset 贴图 --- */
+    /* --- 动态加载 tileset 贴图 --- */
     {
-        char path[1024];
+        cJSON *tilesetsArr = cJSON_GetObjectItem(root, "tilesets");
+        cJSON *ts = NULL;
+        map.tilesetCount = 0;
 
-        /* tileset1: QQ_1779796916957.png, 16x16 瓦片, 35 列 */
-        resolveFullPath(path, sizeof(path), "QQ_1779796916957.png");
-        Image img = LoadImage(path);
-        if (img.data) {
-            map.tileset1    = LoadTextureFromImage(img);
-            map.ts1Cols     = img.width / 16;
-            map.ts1FirstGid = 1;
+        cJSON_ArrayForEach(ts, tilesetsArr)
+        {
+            if (map.tilesetCount >= MAX_TILESETS) break;
+
+            int firstGid = cJSON_GetObjectItem(ts, "firstgid")->valueint;
+            const char *source = cJSON_GetObjectItem(ts, "source")->valuestring;
+
+            /* 构建 tileset 文件的完整路径 */
+            char tsFilePath[1024];
+            snprintf(tsFilePath, sizeof(tsFilePath), "%s/%s", g_mapDir, source);
+
+            /* 解析 tileset 文件获取 image 路径与元数据 */
+            char imgRelPath[512] = "";
+            int cols = 0, tileW = 16, tileH = 16;
+            if (!parseTilesetFile(tsFilePath, imgRelPath, sizeof(imgRelPath),
+                                  &cols, &tileW, &tileH))
+            {
+                /* 回退：.tsx/.tsj 文件不存在时使用硬编码映射（兼容旧版 assets 结构） */
+                if (firstGid == 1) {
+                    strncpy(imgRelPath, "QQ_1779796916957.png", sizeof(imgRelPath));
+                    cols = 35; tileW = 16; tileH = 16;
+                } else if (firstGid == 946) {
+                    strncpy(imgRelPath, "6abad8d14de667fabaecfea4a7242f82.png", sizeof(imgRelPath));
+                    cols = 35; tileW = 16; tileH = 16;
+                } else if (firstGid == 1786) {
+                    strncpy(imgRelPath, "player_sheet.png", sizeof(imgRelPath));
+                    cols = 14; tileW = 16; tileH = 20;
+                } else {
+                    continue;
+                }
+            }
+
+            /* 解析 image 的全路径 */
+            char fullPath[1024];
+            resolveFullPath(fullPath, sizeof(fullPath), imgRelPath);
+
+            Image img = LoadImage(fullPath);
+            if (!img.data) continue;
+
+            TilesetInfo *info = &map.tilesets[map.tilesetCount];
+            info->texture  = LoadTextureFromImage(img);
+            info->firstGid = firstGid;
+            info->cols     = cols;
+            info->tileW    = tileW;
+            info->tileH    = tileH;
+            map.tilesetCount++;
             UnloadImage(img);
         }
 
-        /* tileset2: 6abad8d14de667fabaecfea4a7242f82.png, 16x16 瓦片, 35 列 */
-        resolveFullPath(path, sizeof(path), "6abad8d14de667fabaecfea4a7242f82.png");
-        img = LoadImage(path);
-        if (img.data) {
-            map.tileset2    = LoadTextureFromImage(img);
-            map.ts2Cols     = 35;
-            map.ts2FirstGid = 946;
-            UnloadImage(img);
-        }
-
-        /* 玩家精灵表: player_sheet.png, 16x20, 14 列 */
-        resolveFullPath(path, sizeof(path), "player_sheet.png");
-        img = LoadImage(path);
-        if (img.data) {
-            map.playerSheet  = LoadTextureFromImage(img);
-            map.psCols       = img.width / 16;
-            map.psFirstGid   = 1786;
-            map.psTileW      = 16;
-            map.psTileH      = img.height;
-            UnloadImage(img);
+        /* 玩家精灵表：从 tileset 中查找独立的 player sheet
+           特征：tileH != tileW（人物精灵通常是 16x20 而非 16x16） */
+        for (int i = 0; i < map.tilesetCount; i++)
+        {
+            if (map.tilesets[i].tileH != map.tilesets[i].tileW)
+            {
+                map.playerSheet = map.tilesets[i].texture;
+                map.psCols      = map.tilesets[i].cols;
+                map.psFirstGid  = map.tilesets[i].firstGid;
+                map.psTileW     = map.tilesets[i].tileW;
+                map.psTileH     = map.tilesets[i].tileH;
+                /* 保留在 tilesets 数组中（纹理由 UnloadMap 统一管理），
+                   DrawMap 不会使用它的 GID 范围绘制地板 */
+                break;
+            }
         }
     }
 
@@ -249,10 +362,11 @@ Map LoadMap(const char *filepath)
 void UnloadMap(Map *map)
 {
     free(map->floorData);
-    if (map->tileset1.id > 0)    UnloadTexture(map->tileset1);
-    if (map->tileset2.id > 0)    UnloadTexture(map->tileset2);
-    if (map->playerSheet.id > 0) UnloadTexture(map->playerSheet);
-    if (map->hasBackImage)       UnloadTexture(map->backImage);
+    for (int i = 0; i < map->tilesetCount; i++) {
+        if (map->tilesets[i].texture.id > 0)
+            UnloadTexture(map->tilesets[i].texture);
+    }
+    if (map->hasBackImage) UnloadTexture(map->backImage);
     memset(map, 0, sizeof(*map));
 }
 
@@ -305,28 +419,25 @@ void DrawMap(Map *map)
                 int gid = map->floorData[y * map->width + x];
                 if (gid == 0) continue;   /* 空白瓦片跳过 */
 
-                Rectangle src = {0};
-                Texture2D tex = {0};
-
-                /* 根据 GID 判断所属 tileset */
-                if (gid >= map->ts2FirstGid && map->tileset2.id > 0) {
-                    src = tileSourceRect(gid, map->ts2FirstGid, map->ts2Cols,
-                                         map->tileWidth, map->tileHeight);
-                    tex = map->tileset2;
-                } else if (gid >= map->ts1FirstGid && map->tileset1.id > 0) {
-                    src = tileSourceRect(gid, map->ts1FirstGid, map->ts1Cols,
-                                         map->tileWidth, map->tileHeight);
-                    tex = map->tileset1;
+                /* 在 tileset 数组中查找 GID 所属的 tileset */
+                TilesetInfo *ts = NULL;
+                for (int i = 0; i < map->tilesetCount; i++) {
+                    if (gid >= map->tilesets[i].firstGid) {
+                        if (!ts || map->tilesets[i].firstGid > ts->firstGid)
+                            ts = &map->tilesets[i];
+                    }
                 }
 
-                if (tex.id > 0) {
+                if (ts && ts->texture.id > 0) {
+                    Rectangle src = tileSourceRect(gid, ts->firstGid, ts->cols,
+                                                   ts->tileW, ts->tileH);
                     Rectangle dst = {
                         (float)(x * map->tileWidth),
                         (float)(y * map->tileHeight),
                         (float)map->tileWidth,
                         (float)map->tileHeight
                     };
-                    DrawTexturePro(tex, src, dst, (Vector2){0, 0}, 0.0f, WHITE);
+                    DrawTexturePro(ts->texture, src, dst, (Vector2){0, 0}, 0.0f, WHITE);
                 }
             }
         }
@@ -350,7 +461,7 @@ int GetSolidRects(Map *map, Rectangle *out, int maxCount)
 {
     int count = 0;
     for (int i = 0; i < map->objectCount && count < maxCount; i++) {
-        if (strcmp(map->objects[i].type, "solid") == 0) {
+        if (strncmp(map->objects[i].type, "solid", 5) == 0) {
             out[count++] = map->objects[i].rect;
         }
     }
@@ -373,6 +484,28 @@ int GetStairsRects(Map *map, Rectangle *out, int maxCount)
     int count = 0;
     for (int i = 0; i < map->objectCount && count < maxCount; i++) {
         if (strcmp(map->objects[i].type, "stairs") == 0) {
+            out[count++] = map->objects[i].rect;
+        }
+    }
+    return count;
+}
+
+int GetDoorRects(Map *map, Rectangle *out, int maxCount)
+{
+    int count = 0;
+    for (int i = 0; i < map->objectCount && count < maxCount; i++) {
+        if (strcmp(map->objects[i].type, "door") == 0) {
+            out[count++] = map->objects[i].rect;
+        }
+    }
+    return count;
+}
+
+int GetStairFirstRects(Map *map, Rectangle *out, int maxCount)
+{
+    int count = 0;
+    for (int i = 0; i < map->objectCount && count < maxCount; i++) {
+        if (strcmp(map->objects[i].type, "stair-first") == 0) {
             out[count++] = map->objects[i].rect;
         }
     }

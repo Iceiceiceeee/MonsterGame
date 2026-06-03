@@ -18,6 +18,8 @@ typedef struct {
     bool running;
     bool moving;
     bool onStairs;
+    bool onDoor;
+    bool onStairFirst;
 
     /* animation */
     int frame;

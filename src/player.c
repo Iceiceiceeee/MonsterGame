@@ -236,6 +236,28 @@ void UpdatePlayer(Player *p, Map *map, float dt)
             break;
         }
     }
+
+    /* --- 第八步：门检测 --- */
+    Rectangle doorRects[MAX_DOOR_RECTS];
+    int doorCount = GetDoorRects(map, doorRects, MAX_DOOR_RECTS);
+    p->onDoor = false;
+    for (int i = 0; i < doorCount; i++) {
+        if (rectsOverlap(footRect, doorRects[i])) {
+            p->onDoor = true;
+            break;
+        }
+    }
+
+    /* --- 第九步：stair-first 检测 --- */
+    Rectangle sfRects[MAX_STAIRFIRST_RECTS];
+    int sfCount = GetStairFirstRects(map, sfRects, MAX_STAIRFIRST_RECTS);
+    p->onStairFirst = false;
+    for (int i = 0; i < sfCount; i++) {
+        if (rectsOverlap(footRect, sfRects[i])) {
+            p->onStairFirst = true;
+            break;
+        }
+    }
 }
 
 /* ========== 绘制 ========== */
