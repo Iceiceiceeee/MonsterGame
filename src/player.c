@@ -197,12 +197,12 @@ void DrawPlayer(Player *p, Map *map)
 {
     /* player sheet is the last tileset */
     if (map->tilesetCount == 0) return;
-    Tileset *ps = &map->tilesets[map->tilesetCount - 1];
+    TilesetInfo *ps = &map->tilesets[map->tilesetCount - 1];
 
     int tileId = p->animFrames[p->frame];
-    int col    = tileId % ps->columns;
-    float tw   = (float)ps->tileWidth;
-    float th   = (float)ps->tileHeight;
+    int col    = tileId % ps->cols;
+    float tw   = (float)ps->tileW;
+    float th   = (float)ps->tileH;
 
     Rectangle src = { col * tw, 0, tw, th };
     if (p->dir == DIR_RIGHT) {

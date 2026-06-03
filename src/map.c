@@ -172,11 +172,11 @@ Map LoadMap(const char *filepath)
             if (!firstGidNode || !tileWidthNode || !tileHeightNode || !imageNode)
                 continue;
 
-            Tileset *t = &map.tilesets[map.tilesetCount];
+            TilesetInfo *t = &map.tilesets[map.tilesetCount];
 
             t->firstGid   = firstGidNode->valueint;
-            t->tileWidth  = tileWidthNode->valueint;
-            t->tileHeight = tileHeightNode->valueint;
+            t->tileW  = tileWidthNode->valueint;
+            t->tileH = tileHeightNode->valueint;
 
             const char *imgPath = imageNode->valuestring;
             if (!imgPath) continue;
@@ -186,7 +186,7 @@ Map LoadMap(const char *filepath)
             Image img = LoadImage(fullPath);
             if (img.data) {
                 t->texture = LoadTextureFromImage(img);
-                t->columns = img.width / t->tileWidth;
+                t->cols = img.width / t->tileW;
                 UnloadImage(img);
                 map.tilesetCount++;
             } else {
@@ -235,9 +235,9 @@ static Rectangle tileSourceRect(int gid, int firstGid, int cols, int tileW, int 
 }
 
 /* find the tileset that contains a given GID (highest firstGid <= gid) */
-static Tileset *tilesetForGid(Map *map, int gid)
+static TilesetInfo *tilesetForGid(Map *map, int gid)
 {
-    Tileset *best = NULL;
+    TilesetInfo *best = NULL;
     for (int i = 0; i < map->tilesetCount; i++) {
         if (map->tilesets[i].firstGid <= gid &&
             (!best || map->tilesets[i].firstGid > best->firstGid)) {
@@ -267,11 +267,11 @@ void DrawMap(Map *map)
                 int gid = map->floorData[y * map->width + x];
                 if (gid == 0) continue;
 
-                Tileset *ts = tilesetForGid(map, gid);
+                TilesetInfo *ts = tilesetForGid(map, gid);
                 if (!ts || ts->texture.id == 0) continue;
 
-                Rectangle src = tileSourceRect(gid, ts->firstGid, ts->columns,
-                                               ts->tileWidth, ts->tileHeight);
+                Rectangle src = tileSourceRect(gid, ts->firstGid, ts->cols,
+                                               ts->tileW, ts->tileH);
                 Rectangle dst = {
                     (float)(x * map->tileWidth),
                     (float)(y * map->tileHeight),

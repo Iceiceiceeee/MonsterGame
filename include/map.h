@@ -10,29 +10,14 @@
 
 #include "raylib.h"
 
-<<<<<<< HEAD
-#define MAX_MAP_OBJECTS   128
-#define MAX_SOLID_RECTS    64
-#define MAX_STAIRS_RECTS   16
-#define MAX_TILESETS        8
-
-typedef struct {
-    Texture2D texture;
-    int firstGid;
-    int columns;
-    int tileWidth;
-    int tileHeight;
-} Tileset;
-=======
 /* ========== 常量定义 ========== */
->>>>>>> origin/main
 
-#define MAX_MAP_OBJECTS   128   /**< 地图中最多支持的对象数量 */
-#define MAX_SOLID_RECTS    64   /**< 碰撞检测时 solid 矩形数组的最大容量 */
-#define MAX_STAIRS_RECTS   16   /**< 楼梯检测时 stairs 矩形数组的最大容量 */
-#define MAX_DOOR_RECTS       16   /**< 门检测时 door 矩形数组的最大容量 */
-#define MAX_STAIRFIRST_RECTS 16   /**< stair-first 矩形数组的最大容量 */
-#define MAX_TILESETS          4   /**< 地图最多支持的 tileset 数量 */
+#define MAX_MAP_OBJECTS      128   /**< 地图中最多支持的对象数量 */
+#define MAX_SOLID_RECTS       64   /**< 碰撞检测时 solid 矩形数组的最大容量 */
+#define MAX_STAIRS_RECTS      16   /**< 楼梯检测时 stairs 矩形数组的最大容量 */
+#define MAX_DOOR_RECTS        16   /**< 门检测时 door 矩形数组的最大容量 */
+#define MAX_STAIRFIRST_RECTS  16   /**< stair-first 矩形数组的最大容量 */
+#define MAX_TILESETS           8   /**< 地图最多支持的 tileset 数量 */
 
 /* ========== 数据结构 ========== */
 
@@ -41,20 +26,16 @@ typedef struct {
  *
  * 由 Tiled 编辑器的 object group 层解析而来，
  * 通过 properties 中的布尔属性标明类型（如 solid、stairs、door 等）。
+ * 对于 door 类型，额外记录目标地图及传送坐标。
  */
 typedef struct {
-<<<<<<< HEAD
-    char name[64];
-    char type[32];
-    char targetMap[64];
-    float targetX;
-    float targetY;
-    Rectangle rect;
-=======
-    char name[64];       /**< 对象名称（Tiled 中定义） */
-    char type[32];       /**< 对象类型（从 properties 中提取，如 "solid"、"stairs"、"door"） */
-    Rectangle rect;      /**< 对象的位置和尺寸矩形 */
->>>>>>> origin/main
+    char name[64];        /**< 对象名称（Tiled 中定义） */
+    char type[32];        /**< 对象类型（从 properties 中提取，如 "solid"、"stairs"、"door"） */
+    Rectangle rect;       /**< 对象的位置和尺寸矩形 */
+    /* ---- 门传送相关 ---- */
+    char targetMap[64];   /**< 目标地图文件名 */
+    float targetX;        /**< 目标出生点 X */
+    float targetY;        /**< 目标出生点 Y */
 } MapObject;
 
 /**
@@ -84,11 +65,6 @@ typedef struct {
     int tileWidth;       /**< 单个瓦片宽度（像素） */
     int tileHeight;      /**< 单个瓦片高度（像素） */
 
-<<<<<<< HEAD
-    /* tilesets parsed from TMJ */
-    Tileset tilesets[MAX_TILESETS];
-    int tilesetCount;
-=======
     /* --- 地板瓦片数据 --- */
     int *floorData;      /**< 地板层 GID 数组，长度 = width * height，0 表示空 */
     int dataSize;        /**< floorData 数组长度 */
@@ -96,7 +72,6 @@ typedef struct {
     /* --- 动态 tileset 数组 --- */
     TilesetInfo tilesets[MAX_TILESETS]; /**< tileset 数组 */
     int tilesetCount;                    /**< 实际 tileset 数量 */
->>>>>>> origin/main
 
     /* --- 玩家精灵表 --- */
     Texture2D playerSheet; /**< 玩家精灵贴图 */
@@ -105,16 +80,10 @@ typedef struct {
     int psTileW;           /**< 精灵表中单个瓦片宽度（像素） */
     int psTileH;           /**< 精灵表中单个瓦片高度（像素，整行高度） */
 
-<<<<<<< HEAD
-    /* objects parsed from object layers */
-    MapObject objects[MAX_MAP_OBJECTS];
-    int objectCount;
-=======
     /* --- 背景图片层 --- */
     Texture2D backImage;   /**< 背景贴图（已缩放到地图大小） */
     float backOpacity;     /**< 背景透明度（0.0~1.0） */
     bool hasBackImage;     /**< 是否存在背景图片 */
->>>>>>> origin/main
 
     /* --- 对象列表（从所有 objectgroup 层解析） --- */
     MapObject objects[MAX_MAP_OBJECTS]; /**< 地图对象数组 */
@@ -178,6 +147,13 @@ int  GetStairsRects(Map *map, Rectangle *out, int maxCount);
  */
 int  GetDoorRects(Map *map, Rectangle *out, int maxCount);
 
+/**
+ * GetStairFirstRects - 获取地图中所有 stair-first 类型矩形
+ * @map:      地图指针
+ * @out:      输出缓冲区
+ * @maxCount: 缓冲区最大容量
+ * @return:   实际获取到的 stair-first 矩形数量
+ */
 int  GetStairFirstRects(Map *map, Rectangle *out, int maxCount);
 
 #endif /* MAP_H */

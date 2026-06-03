@@ -19,13 +19,10 @@ typedef struct {
     bool moving;
     bool onStairs;
     bool onDoor;
-<<<<<<< HEAD
     char doorTargetMap[64];
     float doorTargetX;
     float doorTargetY;
-=======
     bool onStairFirst;
->>>>>>> origin/main
 
     /* animation */
     int frame;

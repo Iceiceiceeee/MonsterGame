@@ -1,5 +1,3 @@
-SHELL := /bin/bash
-
 # ======================== 平台检测与配置 ========================
 
 UNAME_S := $(shell uname -s)
@@ -22,10 +20,10 @@ endif
 
 # ======================== 编译参数 ========================
 
-# 获取 raylib 编译参数（头文件路径等）
-RAYLIB_CFLAGS := $(shell pkg-config --cflags raylib)
-# 获取 raylib 链接参数（库文件路径等）
-RAYLIB_LIBS := $(shell pkg-config --libs raylib)
+# 本地 raylib 路径（预编译包）
+RAYLIB_DIR  := $(HOME)/raylib_local/raylib-5.5_macos
+RAYLIB_CFLAGS := -I$(RAYLIB_DIR)/include
+RAYLIB_LIBS := -L$(RAYLIB_DIR)/lib -lraylib
 
 # macOS 额外依赖框架
 ifeq ($(UNAME_S),Darwin)
@@ -37,6 +35,8 @@ endif
 CFLAGS := -Wall -Wextra -std=c17 -g -O2 $(RAYLIB_CFLAGS) -Iinclude
 # 链接选项
 LDLIBS := $(RAYLIB_LIBS)
+# rpath 让运行时能找到 raylib 动态库
+LDFLAGS := -Wl,-rpath,$(RAYLIB_DIR)/lib
 
 # ======================== 文件路径 ========================
 
@@ -54,10 +54,10 @@ TARGET   := $(BUILD_DIR)/monster_game
 all: $(TARGET)
 
 $(TARGET): $(OBJS) | $(BUILD_DIR)
-	TMPDIR=/tmp TEMP=/tmp TMP=/tmp $(CC) -o $@ $^ $(LDLIBS)
+	$(CC) -o $@ $^ $(LDLIBS) $(LDFLAGS)
 
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
-	TMPDIR=/tmp TEMP=/tmp TMP=/tmp $(CC) $(CFLAGS) -MMD -MP -c $< -o $@
+	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
