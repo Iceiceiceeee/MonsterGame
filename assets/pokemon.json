@@ -1,0 +1,72 @@
+[
+  {
+    "id": 1,
+    "name": "阿勃梭鲁",
+    "type": ["恶"],
+    "stats": { "hp": 65, "attack": 130, "defense": 60, "sp_attack": 75, "sp_defense": 60, "speed": 75 },
+    "moves": ["精神切割", "试刀", "剑舞", "电光一闪"]
+  },
+  {
+    "id": 2,
+    "name": "化石翼龙",
+    "type": ["岩石", "飞行"],
+    "stats": { "hp": 80, "attack": 105, "defense": 65, "sp_attack": 60, "sp_defense": 75, "speed": 130 },
+    "moves": ["岩崩", "咬碎", "龙之爪", "高速移动"]
+  },
+  {
+    "id": 3,
+    "name": "波士可多拉",
+    "type": ["钢", "岩石"],
+    "stats": { "hp": 70, "attack": 110, "defense": 180, "sp_attack": 60, "sp_defense": 60, "speed": 50 },
+    "moves": ["铁头", "尖石攻击", "重金属爆弹", "龙之爪"]
+  },
+  {
+    "id": 4,
+    "name": "长尾怪手",
+    "type": ["一般"],
+    "stats": { "hp": 75, "attack": 100, "defense": 66, "sp_attack": 60, "sp_defense": 60, "speed": 115 },
+    "moves": ["双重攻击", "高速星星", "种子机关枪", "电光一闪"]
+  },
+  {
+    "id": 5,
+    "name": "胡地",
+    "type": ["超能力"],
+    "stats": { "hp": 55, "attack": 50, "defense": 45, "sp_attack": 135, "sp_defense": 85, "speed": 120 },
+    "moves": ["精神强念", "影子球", "反射壁", "光墙"]
+  },
+  {
+    "id": 6,
+    "name": "七夕青鸟",
+    "type": ["龙", "飞行"],
+    "stats": { "hp": 75, "attack": 70, "defense": 90, "sp_attack": 70, "sp_defense": 105, "speed": 80 },
+    "moves": ["龙息", "唱歌", "白雾", "神秘守护"]
+  },
+  {
+    "id": 7,
+    "name": "电龙",
+    "type": ["电"],
+    "stats": { "hp": 90, "attack": 75, "defense": 75, "sp_attack": 115, "sp_defense": 90, "speed": 55 },
+    "moves": ["十万伏特", "打雷", "电磁波", "光墙"]
+  },
+  {
+    "id": 8,
+    "name": "太古羽虫",
+    "type": ["岩石", "虫"],
+    "stats": { "hp": 70, "attack": 60, "defense": 125, "sp_attack": 115, "sp_defense": 70, "speed": 95 },
+    "moves": ["岩崩", "信号光束", "高速移动", "剑舞"]
+  },
+  {
+    "id": 9,
+    "name": "阿柏怪",
+    "type": ["毒"],
+    "stats": { "hp": 60, "attack": 85, "defense": 69, "sp_attack": 65, "sp_defense": 79, "speed": 80 },
+    "moves": ["毒击", "咬碎", "大蛇瞪眼", "盘蜷"]
+  },
+  {
+    "id": 10,
+    "name": "风速狗",
+    "type": ["火"],
+    "stats": { "hp": 90, "attack": 110, "defense": 80, "sp_attack": 100, "sp_defense": 80, "speed": 95 },
+    "moves": ["闪焰冲锋", "咬碎", "神速", "火焰旋涡"]
+  }
+]

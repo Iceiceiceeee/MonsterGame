@@ -17,6 +17,7 @@
 #include <stdio.h>    /* 用于 snprintf */
 #include <string.h>   /* 用于 memcpy */
 #include <stdlib.h>   /* 用于 malloc/free */
+#include <stdbool.h>  /* 用于 bool */
 
 /* ======================== 类型定义 ======================== */
 
@@ -88,21 +89,44 @@ void InitGame(void)
 
     /* ---------- 加载中文字体 ---------- */
     /* 将游戏中所有需要用到的中文文本合并，提取所有 codepoint 以生成完整字体 */
-    const char *allText = "开始游戏制作人员点击任意位置或按空格继续这个世界有着神奇的生物它们被称之为精灵与我们相伴共生并与一起战斗开启这段旅程吧欢迎来到这个神奇的世界";
+    const char *allText = "、。一七万三上下不与且世丝两个中串临为主举么义之也了事二于互五交亮人什仅从他代令以们件任仿伏优会传伤伴伸似但位低住体余作你使例供依侧便保信修俯倍倒值偏做停健偶偷储催像元充先光克免入全公六共关其具兼内再冥冰冲决冷冻准减凤凯出击函刀刃分切划列则创初判利到制刺刻前剑剧剪割劈力功加动助劲勃包化区十升半华单占印即卸历压原参及双反发取变叠口古句只叫可台右叶号各合同名后吐向否吧含启吵吸吻员周命和咒咬品哈响唱啄喷器嚎四回图圆在地场坏坐块坠垂型域基堆填墙壁士声处复夕外多夜够大天太央失头奇奔好如妖始威娇嬉子字存孢它守安完定宝实害家容宽寄密寸对导封射将小尔尖尝尺尼尽尾局层居屏展属岩崩左差己已巴布带帧常幕干平并幻幽序库应底度建开异式引张弹强归当录形影径待得御循心忆快念态怒急性怪总息恶悬情想愈意感慢戏成我或战截户所手才扎打扣执找技抓抠护抽拉拍拔招拟拨择括拳拼持指按挑挖换据掌排接推描提摄摇撒撞播操攀支收改攻放故效敌数整文斗斜斩断斯新方旅旋族无旧时明星映是显景暂暗暴更替最月有望朝期未本术机材束条来杰板极构析枚果枪柏染查柱标栏栖样核根格框案梦梭梯检棉棒棕椭楼模欠次欢欺歌止正此步殊段每毒比气水求污沙没沫治沿法泡波泥泼洞流浅浊测浏浪浸消涡液淡深清渐渡温渲渴游源溶滑滚滤潜潮瀑火灰灵炎炮炸点烁烈烟热焰熔燃燕燥爆爪片版牙物特状狂狗独狱猛率王玩环现班球理瓦生用由电画界留白的盒盖盘目直相真眠眼着瞪瞬知矩石码破砾础硬确碍碎碰磁磅磨示礼神离种秒秘积称移程空突窗立站符第等筛签简算管箭米类粉粗精系素索紧紫纠红约级纵纹线组细终经结绘给统继续绿缓编缩网置美群羽翅翔翻翼耀考者而耗聚背胜胡能膀膝自至舌舍舔舞航般色花若英草获菇菜营落蓄蓝蔓藤蘑虫蛇蜷融螺血行表被袭裂装褐西要覆视览觉角解触计认让记设诅诈词试话询该详误读调象负责败贴费资赖赢走起超越足跑距跟路跳踏踢踩身车转轮轰轴轻载较辅辑输边达过迎运近返这进远连迷追退送适逃逆选透逐通速造逻遍道避部都配酸采释里重野量金鉴针钢钮钻铁铃锋锚锤键长闪闭问间闹防阳阴阶阿陀际降限除随隐隔障雨雪零雷雹雾需震青静非面鞭音页顶项顺顿预题颜额风飞驱验高鬼魂魔鲁鳞鸟鸣黄黑默鼠鼾齐龙龟（），：；0123456789";
     int codepointCount = 0;
     int *codepoints = LoadCodepoints(allText, &codepointCount);  /* 提取所有 Unicode 码点 */
 
-#if defined(__APPLE__)
-    /* macOS 系统：使用 Noto Sans SC (开源免费中文字体) */
-    /* 如果 ~/Library/Fonts/ 下没有，尝试系统自带华文黑体 */
-    const char *fontPath = "/Users/han/Library/Fonts/NotoSansSC[wght].ttf";
-    if (FileExists(fontPath))
-    {
-        fontCN = LoadFontEx(fontPath, 48, codepoints, codepointCount);
+    /* 额外追加 ASCII 可打印字符 (32-126): 英文/数字/标点 */
+    int totalCount = codepointCount + 95;
+    int *allCodepoints = (int *)malloc(sizeof(int) * totalCount);
+    memcpy(allCodepoints, codepoints, sizeof(int) * codepointCount);
+    for (int i = 0; i < 95; i++) {
+        allCodepoints[codepointCount + i] = 32 + i;
     }
-    else
-    {
-        /* 降级方案：使用系统自带华文黑体 (STHeiti) */
+    UnloadCodepoints(codepoints);
+    codepoints = allCodepoints;
+    codepointCount = totalCount;
+
+#if defined(__APPLE__)
+    /* macOS 系统：按优先级尝试多个中文字体 */
+    char fontPath[256];
+    const char *home = getenv("HOME");
+    const char *candidates[][2] = {
+        { "NotoSansSC[wght].ttf",     "用户安装的 Noto Sans SC" },
+        { "LXGWWenKai-Regular.ttf",  "霞鹜文楷 (开源中文 TrueType)" },
+        { NULL, NULL }
+    };
+    bool fontLoaded = false;
+
+    if (home) {
+        for (int i = 0; candidates[i][0] && !fontLoaded; i++) {
+            snprintf(fontPath, sizeof(fontPath), "%s/Library/Fonts/%s", home, candidates[i][0]);
+            if (FileExists(fontPath)) {
+                fontCN = LoadFontEx(fontPath, 48, codepoints, codepointCount);
+                fontLoaded = true;
+            }
+        }
+    }
+
+    if (!fontLoaded) {
+        /* 最终降级：系统 STHeiti TTC (兼容性较差) */
         fontCN = LoadFontEx("/System/Library/Fonts/STHeiti Medium.ttc", 48, codepoints, codepointCount);
     }
 #else
