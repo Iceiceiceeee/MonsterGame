@@ -141,9 +141,10 @@ void InitGame(void)
     codepoints = allCodepoints;
     codepointCount = totalCount;
 
-#if defined(__APPLE__)
-    /* macOS 系统：按优先级尝试多个中文字体 */
     char fontPath[256];
+
+#if defined(__APPLE__)
+    /* === macOS 系统：按优先级尝试多个中文字体 === */
     const char *home = getenv("HOME");
     const char *candidates[][2] = {
         { "NotoSansSC[wght].ttf",     "用户安装的 Noto Sans SC" },
@@ -163,12 +164,45 @@ void InitGame(void)
     }
 
     if (!fontLoaded) {
-        /* 最终降级：系统 STHeiti TTC (兼容性较差) */
+        /* 最终降级：系统 STHeiti TTC */
         fontCN = LoadFontEx("/System/Library/Fonts/STHeiti Medium.ttc", 48, codepoints, codepointCount);
     }
-#else
-    /* Windows 系统：使用黑体 (SimHei) */
+
+#elif defined(_WIN32)
+    /* === Windows 系统：使用黑体 (SimHei) === */
     fontCN = LoadFontEx("C:/Windows/Fonts/simhei.ttf", 48, codepoints, codepointCount);
+
+#else
+    /* === Linux 系统：尝试多个常见中文字体路径 === */
+    const char *linuxFonts[] = {
+        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansSC-Regular.otf",
+        "/usr/share/fonts/noto-cjk/NotoSansSC-Regular.otf",
+        "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+        NULL
+    };
+    bool found = false;
+    for (int i = 0; linuxFonts[i] && !found; i++) {
+        if (FileExists(linuxFonts[i])) {
+            fontCN = LoadFontEx(linuxFonts[i], 48, codepoints, codepointCount);
+            found = true;
+        }
+    }
+    if (!found) {
+        /* 尝试用户目录字体 */
+        const char *linuxHome = getenv("HOME");
+        if (linuxHome) {
+            snprintf(fontPath, sizeof(fontPath), "%s/.fonts/LXGWWenKai-Regular.ttf", linuxHome);
+            if (FileExists(fontPath)) {
+                fontCN = LoadFontEx(fontPath, 48, codepoints, codepointCount);
+                found = true;
+            }
+        }
+    }
+    /* 如果都找不到，raylib 会用默认字体（中文会显示为问号） */
+    if (!found) {
+        fontCN = GetFontDefault();
+    }
 #endif
     SetTextureFilter(fontCN.texture, TEXTURE_FILTER_POINT);      /* 像素风：点采样过滤 */
 
@@ -760,7 +794,7 @@ void DrawGame(void)
             DrawTextEx(fontCN, "宝可梦图鉴",
                        (Vector2){ listX, 20 }, 34, 1, (Color){ 255, 220, 100, 255 });
             char info[64];
-            snprintf(info, sizeof(info), "共 %d 只   ↑↓浏览  P/ESC返回", count);
+            snprintf(info, sizeof(info), "共 %d 只   按P退出", count);
             DrawTextEx(fontCN, info,
                        (Vector2){ listX, 56 }, 16, 1, (Color){ 160, 160, 180, 255 });
 
