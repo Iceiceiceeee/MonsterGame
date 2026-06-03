@@ -424,7 +424,8 @@ static void UnloadBattleResources(void) {
     if (texPlayerPlatform.id > 0)  UnloadTexture(texPlayerPlatform);
     if (texEnemyInfoBar.id > 0)    UnloadTexture(texEnemyInfoBar);
     if (texPlayerInfoBar.id > 0)   UnloadTexture(texPlayerInfoBar);
-    if (hasFont)                   UnloadFont(fontBattle);
+    /* 注意：不在此处卸载 fontBattle —— 字体由 game.c 的 fontCN 统一管理，
+       重复卸载会导致下次进入战斗/图鉴时中文全部显示为问号 */
 }
 
 /* ======================== 宝可梦数据初始化 ======================== */
