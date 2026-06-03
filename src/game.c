@@ -10,14 +10,16 @@
  * - 按钮交互与鼠标检测
  */
 
-#include "raylib.h"   /* raylib 图形库 */
-#include "game.h"     /* 游戏模块头文件 */
-#include "map.h"      /* 地图模块 */
-#include "player.h"   /* 玩家模块 */
-#include <stdio.h>    /* 用于 snprintf */
-#include <string.h>   /* 用于 memcpy */
-#include <stdlib.h>   /* 用于 malloc/free */
-#include <stdbool.h>  /* 用于 bool */
+#include "raylib.h"    /* raylib 图形库 */
+#include "game.h"      /* 游戏模块头文件 */
+#include "map.h"       /* 地图模块 */
+#include "player.h"    /* 玩家模块 */
+#include "battle.h"    /* 战斗模块 */
+#include "pokemon_db.h"/* 宝可梦数据库 */
+#include <string.h>    /* 用于 memcpy */
+#include <stdlib.h>    /* 用于 malloc/free */
+#include <stdio.h>     /* 用于 snprintf */
+#include <stdbool.h>   /* 用于 bool */
 
 /* ======================== 类型定义 ======================== */
 
@@ -37,6 +39,8 @@ typedef enum
     GAME_STORY,     /**< 故事剧情 */
     GAME_DIALOGUE,  /**< 角色对话 */
     GAME_CREDITS,   /**< 制作人员 */
+    GAME_BATTLE,    /**< 战斗界面 */
+    GAME_POKEDEX,   /**< 宝可梦图鉴 */
     GAME_WORLD      /**< 世界地图游玩 */
 } GameState;
 
@@ -66,6 +70,32 @@ static Player   worldPlayer;     /**< 玩家对象 */
 static Camera2D worldCamera;     /**< 2D 摄像机 */
 static bool     stairsTriggered; /**< 楼梯触发标记 */
 
+/* ------------------------- 战斗 ------------------------- */
+
+static BattleContext battleCtx;   /**< 战斗上下文 */
+
+/* ------------------------- 图鉴 ------------------------- */
+
+static int pokedexSel = 0;         /**< 图鉴当前选中项索引 */
+static int pokedexScroll = 0;      /**< 图鉴列表滚动偏移 */
+static int pokedexPrevState = 0;   /**< 进入图鉴前的游戏状态 */
+static int pokedexLoadedId = -1;   /**< 当前已加载的精灵贴图 ID */
+static Texture2D pokedexSprite;    /**< 精灵预览贴图 */
+
+/* ------------------------- 转场淡入淡出 ------------------------- */
+
+static float     fadeAlpha;       /**< 转场遮罩透明度 (0=透明, 1=全黑) */
+static int       fadePhase;       /**< 转场阶段: 0=无, 1=淡出, 2=淡入 */
+static GameState fadeTargetState; /**< 淡出完成后要切换到的目标状态 */
+static bool      fadeNeedCleanup; /**< 切换前是否需要卸载地图资源 */
+static bool      fadeSwitchMap;   /**< 淡出完成后是否切换地图（而非切换状态） */
+static char      fadeNextMap[256];/**< 切换地图时的目标 TMJ 路径 */
+static Vector2   fadeNextSpawn;   /**< 切换地图后的玩家出生点 */
+
+/* ------------------------- 当前地图追踪 ------------------------- */
+
+static char currentMapPath[256];  /**< 当前加载的地图文件路径 */
+
 /* ======================== 初始化 ======================== */
 
 /**
@@ -82,6 +112,13 @@ void InitGame(void)
     /* ---------- 状态初始化 ---------- */
     currentState = GAME_TITLE;
     storyStep = 0;
+
+    /* ---------- 转场初始化 ---------- */
+    fadeAlpha = 0.0f;
+    fadePhase = 0;
+    fadeNeedCleanup = false;
+    fadeSwitchMap = false;
+    currentMapPath[0] = '\0';
 
     /* ---------- UI 布局 ---------- */
     btnStartGame = (Rectangle){ 330, 300, 300, 60 };   /* "开始游戏" 按钮：居中偏下 */
@@ -137,6 +174,10 @@ void InitGame(void)
 
     UnloadCodepoints(codepoints);  /* 释放临时码点数组 */
 
+    /* ---------- 加载宝可梦数据库 ---------- */
+    LoadMoveDB();
+    LoadPokemonDB();
+
     /* ---------- 加载人物图片 (绿幕抠图) ---------- */
     Image img = LoadImage("assets/professor.jpg");
     ImageResize(&img, 400, 500);                                 /* 缩放到 400x500 */
@@ -187,6 +228,78 @@ void InitGame(void)
  */
 void UpdateGame(void)
 {
+    float dt = GetFrameTime();
+
+    /* ========== 转场淡入淡出处理 ========== */
+    if (fadePhase == 1)
+    {
+        /* 淡出阶段：逐渐增加遮罩不透明度 */
+        fadeAlpha += 2.0f * dt;
+        if (fadeAlpha >= 1.0f)
+        {
+            fadeAlpha = 1.0f;
+
+            if (fadeSwitchMap)
+            {
+                /* 保存当前玩家精灵表（切换地图后可能需要复用） */
+                Texture2D savedPS = worldMap.playerSheet;
+                int savedPsCols = worldMap.psCols;
+                int savedPsFirstGid = worldMap.psFirstGid;
+                int savedPsTileW = worldMap.psTileW;
+                int savedPsTileH = worldMap.psTileH;
+                /* 从 tilesets 中移除玩家精灵条目，防止 UnloadMap 卸载它 */
+                for (int i = 0; i < worldMap.tilesetCount; i++) {
+                    if (worldMap.tilesets[i].texture.id == savedPS.id) {
+                        worldMap.tilesets[i] = worldMap.tilesets[worldMap.tilesetCount - 1];
+                        worldMap.tilesetCount--;
+                        break;
+                    }
+                }
+
+                if (fadeNeedCleanup) UnloadMap(&worldMap);
+
+                /* 地图切换：加载新地图并保持在 GAME_WORLD 状态 */
+                worldMap = LoadMap(fadeNextMap);
+
+                /* 若新地图没有玩家精灵表，复用之前保存的 */
+                if (worldMap.playerSheet.id == 0 && savedPS.id > 0) {
+                    worldMap.playerSheet = savedPS;
+                    worldMap.psCols      = savedPsCols;
+                    worldMap.psFirstGid  = savedPsFirstGid;
+                    worldMap.psTileW     = savedPsTileW;
+                    worldMap.psTileH     = savedPsTileH;
+                    /* 放入 tilesets 数组以在 UnloadMap 时正确释放 */
+                    if (worldMap.tilesetCount < MAX_TILESETS) {
+                        TilesetInfo *ts = &worldMap.tilesets[worldMap.tilesetCount];
+                        ts->texture  = savedPS;
+                        ts->firstGid = savedPsFirstGid;
+                        ts->cols     = savedPsCols;
+                        ts->tileW    = savedPsTileW;
+                        ts->tileH    = savedPsTileH;
+                        worldMap.tilesetCount++;
+                    }
+                }
+
+                InitPlayer(&worldPlayer, fadeNextSpawn, &worldMap);
+                worldCamera.target = worldPlayer.pos;
+                worldCamera.offset = (Vector2){ 480, 320 };
+                worldCamera.rotation = 0.0f;
+                worldCamera.zoom = 1.5f;
+                stairsTriggered = false;
+                strncpy(currentMapPath, fadeNextMap, sizeof(currentMapPath) - 1);
+                fadeSwitchMap = false;
+                currentState = GAME_WORLD;
+            }
+            else
+            {
+                if (fadeNeedCleanup) UnloadMap(&worldMap);
+                currentState = fadeTargetState;
+            }
+            fadePhase = 2;
+        }
+        return;  /* 淡出期间跳过正常逻辑更新 */
+    }
+
     mousePoint = GetMousePosition();  /* 更新当前鼠标位置 */
 
     switch (currentState)
@@ -232,6 +345,7 @@ void UpdateGame(void)
             if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) || IsKeyPressed(KEY_SPACE) || IsKeyPressed(KEY_ESCAPE))
             {
                 worldMap = LoadMap("assets/maps/tootooo.tmj");
+                strncpy(currentMapPath, "assets/maps/tootooo.tmj", sizeof(currentMapPath) - 1);
                 InitPlayer(&worldPlayer, worldMap.playerSpawn, &worldMap);
                 worldCamera.target = worldPlayer.pos;
                 worldCamera.offset = (Vector2){ 480, 320 };
@@ -254,42 +368,129 @@ void UpdateGame(void)
 
         } break;
 
+        /* ========== 战斗界面 ========== */
+        case GAME_BATTLE:
+        {
+            UpdateBattle(&battleCtx);
+            if (IsBattleFinished()) {
+                CloseBattle(&battleCtx);
+                currentState = GAME_WORLD;
+            }
+        } break;
+
+        /* ========== 宝可梦图鉴 ========== */
+        case GAME_POKEDEX:
+        {
+            int count = GetSpeciesCount();
+            int prevSel = pokedexSel;
+
+            if (IsKeyPressed(KEY_DOWN) || IsKeyPressed(KEY_S)) {
+                pokedexSel++;
+                if (pokedexSel >= count) pokedexSel = count - 1;
+            }
+            if (IsKeyPressed(KEY_UP) || IsKeyPressed(KEY_W)) {
+                pokedexSel--;
+                if (pokedexSel < 0) pokedexSel = 0;
+            }
+            if (IsKeyPressed(KEY_RIGHT) || IsKeyPressed(KEY_D)) {
+                pokedexSel += 10;
+                if (pokedexSel >= count) pokedexSel = count - 1;
+            }
+            if (IsKeyPressed(KEY_LEFT) || IsKeyPressed(KEY_A)) {
+                pokedexSel -= 10;
+                if (pokedexSel < 0) pokedexSel = 0;
+            }
+            if (pokedexSel < pokedexScroll) pokedexScroll = pokedexSel;
+            if (pokedexSel >= pokedexScroll + 16) pokedexScroll = pokedexSel - 15;
+            if (pokedexScroll < 0) pokedexScroll = 0;
+
+            if (pokedexSel != prevSel) {
+                if (pokedexSprite.id > 0) UnloadTexture(pokedexSprite);
+                pokedexSprite.id = 0;
+                pokedexLoadedId = -1;
+            }
+
+            if (IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_P)) {
+                if (pokedexSprite.id > 0) UnloadTexture(pokedexSprite);
+                pokedexSprite.id = 0;
+                pokedexLoadedId = -1;
+                currentState = GAME_WORLD;
+            }
+        } break;
+
         /* ========== 世界地图游玩 ========== */
         case GAME_WORLD:
         {
-            float dt = GetFrameTime();
+            /* 按 B → 进入战斗测试 */
+            if (IsKeyPressed(KEY_B))
+            {
+                InitBattle(&battleCtx, fontCN);
+                currentState = GAME_BATTLE;
+                break;
+            }
 
-            /* 按 ESC → 返回标题界面 */
+            /* 按 P → 打开宝可梦图鉴 */
+            if (IsKeyPressed(KEY_P))
+            {
+                pokedexSel = 0;
+                pokedexScroll = 0;
+                pokedexPrevState = currentState;
+                currentState = GAME_POKEDEX;
+                break;
+            }
+
+            /* 按 ESC → 返回标题界面（带淡出效果） */
             if (IsKeyPressed(KEY_ESCAPE))
             {
-                UnloadMap(&worldMap);
-                currentState = GAME_TITLE;
+                fadePhase = 1;
+                fadeAlpha = 0.0f;
+                fadeTargetState = GAME_TITLE;
+                fadeNeedCleanup = true;
+                fadeSwitchMap = false;
+                break;
+            }
+
+            /* 接触到户外楼梯 → 进入一楼室内，出生在 stair-first 旁边 */
+            if (stairsTriggered)
+            {
+                fadePhase = 1;
+                fadeAlpha = 0.0f;
+                fadeNeedCleanup = true;
+                fadeSwitchMap = true;
+                snprintf(fadeNextMap, sizeof(fadeNextMap), "assets/maps/yilou.tmj");
+                fadeNextSpawn = (Vector2){ 466, 170 };
+                break;
+            }
+
+            /* 接触到一楼 stair-first → 返回户外楼梯旁边 */
+            if (worldPlayer.onStairFirst)
+            {
+                fadePhase = 1;
+                fadeAlpha = 0.0f;
+                fadeNeedCleanup = true;
+                fadeSwitchMap = true;
+                snprintf(fadeNextMap, sizeof(fadeNextMap), "assets/maps/tootooo.tmj");
+                fadeNextSpawn = (Vector2){ 480, 150 };
+                break;
+            }
+
+            /* 门传送：使用门对象的 targetMap 动态切换地图 */
+            if (worldPlayer.onDoor &&
+                worldPlayer.doorTargetMap[0] != '\0')
+            {
+                fadePhase = 1;
+                fadeAlpha = 0.0f;
+                fadeNeedCleanup = true;
+                fadeSwitchMap = true;
+                snprintf(fadeNextMap, sizeof(fadeNextMap), "assets/maps/%s",
+                         worldPlayer.doorTargetMap);
+                fadeNextSpawn = (Vector2){ worldPlayer.doorTargetX, worldPlayer.doorTargetY };
+                TraceLog(LOG_INFO, "TELEPORT: door -> %s (%.0f, %.0f)",
+                         fadeNextMap, fadeNextSpawn.x, fadeNextSpawn.y);
                 break;
             }
 
             UpdatePlayer(&worldPlayer, &worldMap, dt);
-
-            /* 门传送：触碰门自动切换地图 */
-            if (worldPlayer.onDoor &&
-                worldPlayer.doorTargetMap[0] != '\0')
-            {
-                char mapPath[512];
-                snprintf(mapPath, sizeof(mapPath), "assets/maps/%s",
-                         worldPlayer.doorTargetMap);
-                TraceLog(LOG_INFO, "TELEPORT: loading %s -> (%.0f, %.0f)",
-                         mapPath, worldPlayer.doorTargetX, worldPlayer.doorTargetY);
-                Map newMap = LoadMap(mapPath);
-                if (newMap.floorData) {
-                    UnloadMap(&worldMap);
-                    worldMap = newMap;
-                    worldPlayer.pos.x = worldPlayer.doorTargetX;
-                    worldPlayer.pos.y = worldPlayer.doorTargetY;
-                    worldCamera.target = worldPlayer.pos;
-                    TraceLog(LOG_INFO, "TELEPORT: success!");
-                } else {
-                    TraceLog(LOG_WARNING, "TELEPORT: failed to load %s", mapPath);
-                }
-            }
 
             stairsTriggered = worldPlayer.onStairs;
 
@@ -302,6 +503,17 @@ void UpdateGame(void)
             worldCamera.target.y += (target.y - worldCamera.target.y) * 8.0f * dt;
 
         } break;
+    }
+
+    /* 淡入阶段：逐渐减少遮罩不透明度 */
+    if (fadePhase == 2)
+    {
+        fadeAlpha -= 2.0f * dt;
+        if (fadeAlpha <= 0.0f)
+        {
+            fadeAlpha = 0.0f;
+            fadePhase = 0;
+        }
     }
 }
 
@@ -527,6 +739,186 @@ void DrawGame(void)
 
         } break;
 
+        /* ========== 战斗界面 ========== */
+        case GAME_BATTLE:
+        {
+            DrawBattle(&battleCtx);
+        } break;
+
+        /* ========== 宝可梦图鉴 ========== */
+        case GAME_POKEDEX:
+        {
+            ClearBackground((Color){ 20, 24, 40, 255 });
+
+            int count = GetSpeciesCount();
+            int listW = 350;
+            int listX = 20;
+            int listY = 80;
+            int itemH = 32;
+            int visible = 16;
+
+            DrawTextEx(fontCN, "宝可梦图鉴",
+                       (Vector2){ listX, 20 }, 34, 1, (Color){ 255, 220, 100, 255 });
+            char info[64];
+            snprintf(info, sizeof(info), "共 %d 只   ↑↓浏览  P/ESC返回", count);
+            DrawTextEx(fontCN, info,
+                       (Vector2){ listX, 56 }, 16, 1, (Color){ 160, 160, 180, 255 });
+
+            DrawRectangle(listX - 8, listY - 8, listW + 16, visible * itemH + 16,
+                          (Color){ 0, 0, 0, 150 });
+            DrawRectangleLinesEx((Rectangle){ listX - 8, listY - 8, listW + 16, visible * itemH + 16 },
+                                 2, (Color){ 80, 80, 120, 255 });
+
+            for (int i = 0; i < visible && (i + pokedexScroll) < count; i++) {
+                int idx = i + pokedexScroll;
+                const SpeciesData *sp = GetSpeciesByIndex(idx);
+                if (!sp) continue;
+
+                float iy = listY + i * itemH;
+                bool sel = (idx == pokedexSel);
+
+                if (sel) {
+                    DrawRectangle(listX - 4, iy, listW, itemH,
+                                  (Color){ 60, 100, 200, 220 });
+                }
+
+                char line[64];
+                snprintf(line, sizeof(line), "%03d  %s", sp->id, sp->name);
+                DrawTextEx(fontCN, line,
+                           (Vector2){ listX + 8, iy + 4 }, 20, 1,
+                           sel ? (Color){ 255, 255, 160, 255 } : (Color){ 220, 220, 240, 255 });
+            }
+
+            if (count > visible) {
+                float barH = (float)visible / count * (visible * itemH);
+                float barY = listY + (float)pokedexScroll / count * (visible * itemH);
+                DrawRectangle(listX + listW + 4, barY, 6, barH, (Color){ 100, 100, 200, 180 });
+            }
+
+            const SpeciesData *sel = GetSpeciesByIndex(pokedexSel);
+            if (sel) {
+                int rx = 400;
+                int ry = 70;
+
+                Rectangle panel = { rx, ry, 540, 540 };
+                DrawRectangleRec(panel, (Color){ 0, 0, 0, 150 });
+                DrawRectangleLinesEx(panel, 2, (Color){ 80, 80, 120, 255 });
+
+                int px = rx + 24;
+
+                char buf[64];
+                snprintf(buf, sizeof(buf), "No.%03d  %s", sel->id, sel->name);
+                DrawTextEx(fontCN, buf, (Vector2){ px, ry + 12 }, 32, 1,
+                           (Color){ 255, 220, 100, 255 });
+
+                DrawLineEx((Vector2){ px, ry + 52 }, (Vector2){ rx + 520, ry + 52 },
+                           1, (Color){ 100, 100, 140, 200 });
+
+                snprintf(buf, sizeof(buf), "属性: %s",
+                         TypeToChinese(sel->type1));
+                DrawTextEx(fontCN, buf, (Vector2){ px, ry + 65 }, 22, 1,
+                           (Color){ 100, 200, 255, 255 });
+                if (sel->type2 != TYPE_NONE) {
+                    snprintf(buf, sizeof(buf), " / %s", TypeToChinese(sel->type2));
+                    DrawTextEx(fontCN, buf, (Vector2){ px + 120, ry + 65 }, 22, 1,
+                               (Color){ 100, 200, 255, 255 });
+                }
+
+                DrawLineEx((Vector2){ px, ry + 92 }, (Vector2){ rx + 520, ry + 92 },
+                           1, (Color){ 100, 100, 140, 200 });
+
+                if (sel->hasRealStats) {
+                    int statY = ry + 105;
+                    const char *labels[] = { "HP", "攻击", "防御", "特攻", "特防", "速度" };
+                    int values[] = {
+                        sel->baseStats.hp, sel->baseStats.attack, sel->baseStats.defense,
+                        sel->baseStats.sp_attack, sel->baseStats.sp_defense, sel->baseStats.speed
+                    };
+                    Color sc[] = {
+                        { 80, 220, 80, 255 }, { 240, 80, 60, 255 }, { 240, 200, 40, 255 },
+                        { 60, 140, 240, 255 }, { 60, 200, 200, 255 }, { 240, 140, 200, 255 }
+                    };
+
+                    for (int s = 0; s < 6; s++) {
+                        DrawTextEx(fontCN, labels[s],
+                                   (Vector2){ px, statY + s * 42 }, 22, 1,
+                                   (Color){ 200, 200, 220, 255 });
+
+                        char valStr[8];
+                        snprintf(valStr, sizeof(valStr), "%d", values[s]);
+                        DrawTextEx(fontCN, valStr,
+                                   (Vector2){ px + 80, statY + s * 42 }, 22, 1,
+                                   (Color){ 255, 255, 255, 255 });
+
+                        Rectangle barBg = { px + 130, statY + s * 42 + 6, 340, 14 };
+                        DrawRectangleRec(barBg, (Color){ 60, 60, 80, 255 });
+                        float frac = (float)values[s] / 255.0f;
+                        if (frac > 1.0f) frac = 1.0f;
+                        if (frac < 0.01f) frac = 0.01f;
+                        Rectangle barFill = { px + 131, statY + s * 42 + 7, 338 * frac, 12 };
+                        DrawRectangleRec(barFill, sc[s]);
+                    }
+
+                    int totalY = ry + 105 + 6 * 42 + 10;
+                    DrawLineEx((Vector2){ px, totalY - 6 }, (Vector2){ rx + 520, totalY - 6 },
+                               1, (Color){ 100, 100, 140, 200 });
+                    int total = TotalBaseStats(sel);
+                    snprintf(buf, sizeof(buf), "种族值总和: %d", total);
+                    DrawTextEx(fontCN, buf,
+                               (Vector2){ px, totalY + 4 }, 24, 1,
+                               (Color){ 255, 220, 100, 255 });
+                } else {
+                    DrawTextEx(fontCN, "(无种族值数据)",
+                               (Vector2){ px, ry + 105 }, 20, 1,
+                               (Color){ 160, 160, 180, 255 });
+                }
+
+                int moveY = ry + 400;
+                if (sel->moveCount > 0) {
+                    DrawTextEx(fontCN, "配招:",
+                               (Vector2){ px, moveY }, 20, 1,
+                               (Color){ 180, 180, 200, 255 });
+                    for (int m = 0; m < sel->moveCount; m++) {
+                        const MoveData *md = GetMoveData(sel->moveNames[m]);
+                        char mstr[128];
+                        if (md) {
+                            snprintf(mstr, sizeof(mstr), "%s  威力:%d  命中:%d  PP:%d",
+                                     sel->moveNames[m], md->power, md->accuracy, md->maxPP);
+                        } else {
+                            snprintf(mstr, sizeof(mstr), "%s  (技能库未收录)",
+                                     sel->moveNames[m]);
+                        }
+                        DrawTextEx(fontCN, mstr,
+                                   (Vector2){ px + 20, moveY + 28 + m * 26 }, 18, 1,
+                                   (Color){ 220, 240, 220, 255 });
+                    }
+                }
+
+                if (pokedexLoadedId != sel->id) {
+                    if (pokedexSprite.id > 0) UnloadTexture(pokedexSprite);
+                    pokedexSprite.id = 0;
+                    pokedexLoadedId = sel->id;
+
+                    char spritePath[64];
+                    snprintf(spritePath, sizeof(spritePath), "assets/images/front/front_%d.png", sel->id);
+                    if (FileExists(spritePath)) {
+                        Image img = LoadImage(spritePath);
+                        if (img.data) {
+                            ImageResize(&img, img.width * 3, img.height * 3);
+                            pokedexSprite = LoadTextureFromImage(img);
+                            SetTextureFilter(pokedexSprite, TEXTURE_FILTER_POINT);
+                            UnloadImage(img);
+                        }
+                    }
+                }
+                if (pokedexSprite.id > 0) {
+                    Rectangle src = { 0, 0, (float)pokedexSprite.width, (float)pokedexSprite.height };
+                    Rectangle dst = { rx + 380, ry + 10, 144, 144 };
+                    DrawTexturePro(pokedexSprite, src, dst, (Vector2){ 0, 0 }, 0.0f, WHITE);
+                }
+            }
+        } break;
+
         /* ========== 世界地图游玩 ========== */
         case GAME_WORLD:
         {
@@ -537,11 +929,14 @@ void DrawGame(void)
 
             EndMode2D();
 
-            /* 右下角操作提示 */
-            const char *ctrl = "WASD 移动 | Shift 跑步 | ESC 返回";
-            DrawText(ctrl, 10, 695, 16, LIGHTGRAY);
-
         } break;
+    }
+
+    /* 转场淡入淡出遮罩 */
+    if (fadePhase != 0)
+    {
+        DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(),
+                      (Color){ 0, 0, 0, (unsigned char)(fadeAlpha * 255.0f) });
     }
 }
 
@@ -557,6 +952,13 @@ void CloseGame(void)
     if (currentState == GAME_WORLD) {
         UnloadMap(&worldMap);
     }
+    if (currentState == GAME_BATTLE) {
+        CloseBattle(&battleCtx);
+    }
+    if (pokedexSprite.id > 0) {
+        UnloadTexture(pokedexSprite);
+    }
+    UnloadPokemonDB();         /* 释放宝可梦数据库 */
     UnloadTexture(masterTex);  /* 卸载人物纹理 */
     UnloadFont(fontCN);        /* 卸载中文字体 */
 }
