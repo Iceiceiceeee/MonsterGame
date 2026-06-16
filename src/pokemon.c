@@ -174,7 +174,7 @@ void InitPokemon(Pokemon *p, int speciesId, int level) {
         p->type1 = TYPE_NORMAL;
         p->type2 = TYPE_NONE;
     } else {
-        strncpy(p->name, sp->name, MAX_NAME_LEN - 1);
+        snprintf(p->name, MAX_NAME_LEN, "%s", sp->name);
         p->speciesId = sp->id;
         p->type1 = sp->type1;
         p->type2 = sp->type2;

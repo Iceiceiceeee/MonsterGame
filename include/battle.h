@@ -70,8 +70,9 @@ typedef struct {
     bool needsCleanup;
 } BattleContext;
 
-/** 初始化战斗：加载背景/站台/精灵贴图，初始化双方宝可梦 */
-void InitBattle(BattleContext *bc, Font fontCN);
+/** 初始化战斗：加载背景/站台/精灵贴图，初始化双方宝可梦
+ *  @param isBoss  true = boss战（显示"boss派出了"而非"野生的"） */
+void InitBattle(BattleContext *bc, Font fontCN, bool isBoss);
 
 /** 每帧更新战斗逻辑：处理玩家输入、状态切换、动画推进 */
 void UpdateBattle(BattleContext *bc);

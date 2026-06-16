@@ -1,0 +1,14 @@
+{ "columns":23,
+ "image":"sucai\/dixing.png",
+ "imageheight":560,
+ "imagewidth":368,
+ "margin":0,
+ "name":"dixing",
+ "spacing":0,
+ "tilecount":805,
+ "tiledversion":"1.12.1",
+ "tileheight":16,
+ "tilewidth":16,
+ "type":"tileset",
+ "version":"1.10"
+}

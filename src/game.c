@@ -69,6 +69,11 @@ static Player   worldPlayer;     /**< 玩家对象 */
 static Camera2D worldCamera;     /**< 2D 摄像机 */
 static bool     stairsTriggered; /**< 楼梯触发标记 */
 
+/* ------------------------- 标牌对话 ------------------------- */
+
+static bool     showSignDialog;    /**< 是否显示标牌对话框 */
+static char     signDialogText[256];/**< 当前标牌对话文本 */
+
 /* ------------------------- 战斗 ------------------------- */
 
 static BattleContext battleCtx;   /**< 战斗上下文 */
@@ -90,6 +95,8 @@ static bool      fadeNeedCleanup; /**< 切换前是否需要卸载地图资源 *
 static bool      fadeSwitchMap;   /**< 淡出完成后是否切换地图（而非切换状态） */
 static char      fadeNextMap[256];/**< 切换地图时的目标 TMJ 路径 */
 static Vector2   fadeNextSpawn;   /**< 切换地图后的玩家出生点 */
+static char      fadeNextSpawnName[64]; /**< 切换地图后按名称解析出生点（若不为空则覆盖 fadeNextSpawn） */
+static float      teleportCooldown;     /**< 传送后冷却计时器，防止立即重新触发 */
 
 /* ------------------------- 当前地图追踪 ------------------------- */
 
@@ -117,6 +124,8 @@ void InitGame(void)
     fadePhase = 0;
     fadeNeedCleanup = false;
     fadeSwitchMap = false;
+    fadeNextSpawnName[0] = '\0';
+    teleportCooldown = 0.0f;
     currentMapPath[0] = '\0';
 
     /* ---------- UI 布局 ---------- */
@@ -125,7 +134,7 @@ void InitGame(void)
 
     /* ---------- 加载中文字体 ---------- */
     /* 将游戏中所有需要用到的中文文本合并，提取所有 codepoint 以生成完整字体 */
-    const char *allText = "开始游戏制作人员点击任意位置或按空格继续这个世界有着神奇的生物它们被称之为精灵与我们相伴共生并与一起战斗开启这段旅程吧欢迎来到这个神奇的世界野生的出现了要做什么使用了倒下了逃跑成功了没有道具可以使用没有可以替换的精灵技能点数不足逃跑道具LvHP一般火水草电冰格斗毒地面飞行超能力岩石龙钢恶虫幽灵妖精宝可梦图鉴只浏览返回属性攻击防御特攻特防速度总和配招威力命中无种族值数据共阿勃梭鲁化石翼龙波士可多拉长尾怪手胡地七夕青鸟电龙太古羽虫阿柏怪风速狗精神切割试刀剑舞龙之爪重金属爆弹双重攻击高速星星影子球反射壁光墙龙息唱歌白雾神秘守护电磁波毒击大蛇瞪眼盘蜷神速喷火龙火焰喷射翅膀攻击劈开龙之怒凯西念力瞬间移动杰尼龟水枪泡沫咬住撞击水炮吐丝虫咬岩崩咬碎地震十万伏特打雷铁头尖石攻击闪焰冲锋火焰旋涡高速移动信号光束种子机关枪精神强念0123456789";
+    const char *allText = "开始游戏制作人员点击任意位置或按空格继续这个世界有着神奇的生物它们被称之为精灵与我们相伴共生并与一起战斗开启这段旅程吧欢迎来到这个神奇的世界野生的出现了要做什么使用了倒下了逃跑成功了没有道具可以使用没有可以替换的精灵技能点数不足逃跑道具LvHP一般火水草电冰格斗毒地面飞行超能力岩石龙钢恶虫幽灵妖精宝可梦图鉴只浏览返回属性攻击防御特攻特防速度总和配招威力命中无种族值数据共阿勃梭鲁化石翼龙波士可多拉长尾怪手胡地七夕青鸟电龙太古羽虫阿柏怪风速狗精神切割试刀剑舞龙之爪重金属爆弹双重攻击高速星星影子球反射壁光墙龙息唱歌白雾神秘守护电磁波毒击大蛇瞪眼盘蜷神速喷火龙火焰喷射翅膀攻击劈开龙之怒凯西念力瞬间移动杰尼龟水枪泡沫咬住撞击水炮吐丝虫咬岩崩咬碎地震十万伏特打雷铁头尖石攻击闪焰冲锋火焰旋涡高速移动信号光束种子机关枪精神强念你赢输0123456789效果拔群暴背包里如也其伤害功背替换造成但是没有命中野生的化石翼龙阿勃梭鲁按键挑战馆主对话老师新招式以后教会我是";
     int codepointCount = 0;
     int *codepoints = LoadCodepoints(allText, &codepointCount);  /* 提取所有 Unicode 码点 */
 
@@ -248,6 +257,15 @@ void UpdateGame(void)
                 /* 地图切换：加载新地图并保持在 GAME_WORLD 状态 */
                 worldMap = LoadMap(fadeNextMap);
 
+                /* 室外地图：人物缩小 */
+                if (strstr(fadeNextMap, "huwai")) {
+                    worldMap.playerScale = 0.5f;
+                }
+                /* 道馆室内：人物稍大 */
+                if (strstr(fadeNextMap, "guanzi")) {
+                    worldMap.playerScale = 0.6f;
+                }
+
                 /* 若新地图没有玩家精灵表，复用之前保存的 */
                 if (worldMap.playerSheet.id == 0 && savedPS.id > 0) {
                     worldMap.playerSheet = savedPS;
@@ -267,13 +285,36 @@ void UpdateGame(void)
                     }
                 }
 
+                /* 【新增】若指定了传送点名称，从新地图 chuansong 层查询出生坐标 */
+                if (fadeNextSpawnName[0] != '\0') {
+                    Vector2 resolved;
+                    if (FindTeleportSpawn(&worldMap, fadeNextSpawnName, &resolved)) {
+                        fadeNextSpawn = resolved;
+                    }
+                    fadeNextSpawnName[0] = '\0';
+                }
+
                 InitPlayer(&worldPlayer, fadeNextSpawn, &worldMap);
+                /* 户外地图：人物缩小 + 地图放大 + 速度减半 */
+                if (strstr(fadeNextMap, "huwai")) {
+                    worldPlayer.walkSpeed = 40.0f;
+                    worldPlayer.runSpeed  = 90.0f;
+                }
                 worldCamera.target = worldPlayer.pos;
                 worldCamera.offset = (Vector2){ 480, 320 };
                 worldCamera.rotation = 0.0f;
-                worldCamera.zoom = 1.5f;
+                if (strstr(fadeNextMap, "huwai")) {
+                    worldCamera.zoom = 2.0f;
+                } else if (strstr(fadeNextMap, "guanzi")) {
+                    worldCamera.zoom = 1.5f;  /* 道馆室内，标准缩放，避免1.2x导致马赛克 */
+                } else {
+                    worldCamera.zoom = (worldMap.playerScale < 1.0f) ? 1.2f : 1.5f;
+                }
                 stairsTriggered = false;
+                showSignDialog = false;
+                teleportCooldown = 0.5f; /* 传送后短暂冷却，防止立即重新触发 */
                 strncpy(currentMapPath, fadeNextMap, sizeof(currentMapPath) - 1);
+                currentMapPath[sizeof(currentMapPath) - 1] = '\0';
                 fadeSwitchMap = false;
                 currentState = GAME_WORLD;
             }
@@ -339,6 +380,7 @@ void UpdateGame(void)
                 worldCamera.rotation = 0.0f;
                 worldCamera.zoom = 1.5f;
                 stairsTriggered = false;
+                showSignDialog = false;
                 currentState = GAME_WORLD;
             }
 
@@ -408,10 +450,25 @@ void UpdateGame(void)
         /* ========== 世界地图游玩 ========== */
         case GAME_WORLD:
         {
-            /* 按 B → 进入战斗测试 */
+            /* 按 E 与NPC交互 → 进入战斗（npc-boss）/ 对话（npc-teacher） */
+            if (!showSignDialog && worldPlayer.onNpc && IsKeyPressed(KEY_E))
+            {
+                if (strcmp(worldPlayer.npcType, "npc-boss") == 0) {
+                    InitBattle(&battleCtx, fontCN, true);
+                    currentState = GAME_BATTLE;
+                    break;
+                }
+                else if (strcmp(worldPlayer.npcType, "npc-teacher") == 0) {
+                    showSignDialog = true;
+                    strncpy(signDialogText, "我是技能老师！\n以后会教你新的招式...", sizeof(signDialogText) - 1);
+                    break;
+                }
+            }
+
+            /* 按 B → 进入战斗测试（调试用） */
             if (IsKeyPressed(KEY_B))
             {
-                InitBattle(&battleCtx, fontCN);
+                InitBattle(&battleCtx, fontCN, false);
                 currentState = GAME_BATTLE;
                 break;
             }
@@ -437,6 +494,30 @@ void UpdateGame(void)
                 break;
             }
 
+            /* --- 标牌交互 --- */
+            if (showSignDialog)
+            {
+                /* 对话框显示中，按空格或回车关闭 */
+                if (IsKeyPressed(KEY_SPACE) || IsKeyPressed(KEY_ENTER))
+                {
+                    showSignDialog = false;
+                }
+                break;  /* 对话框显示时暂停玩家移动 */
+            }
+
+            if (worldPlayer.onSign && (IsKeyPressed(KEY_SPACE) || IsKeyPressed(KEY_ENTER)))
+            {
+                showSignDialog = true;
+                /* 根据标牌名称生成对话文本 */
+                if (strcmp(worldPlayer.signName, "sign-friendhome") == 0)
+                    strncpy(signDialogText, "这里是对战餐厅\n训练家们在这里聚集切磋", sizeof(signDialogText) - 1);
+                else if (strcmp(worldPlayer.signName, "sign-masterhome") == 0)
+                    strncpy(signDialogText, "这里是大师的家\n传说中最强训练家的住所", sizeof(signDialogText) - 1);
+                else
+                    strncpy(signDialogText, "这是一块标牌\n上面写着一些文字...", sizeof(signDialogText) - 1);
+                break;
+            }
+
             /* 接触到户外楼梯 → 进入一楼室内，出生在 stair-first 旁边 */
             if (stairsTriggered)
             {
@@ -444,7 +525,7 @@ void UpdateGame(void)
                 fadeAlpha = 0.0f;
                 fadeNeedCleanup = true;
                 fadeSwitchMap = true;
-                strncpy(fadeNextMap, "C:/Users/jiyeh/Desktop/pokemon tiled/yilou.tmj",
+                strncpy(fadeNextMap, "assets/maps/yilou.tmj",
                         sizeof(fadeNextMap) - 1);
                 fadeNextSpawn = (Vector2){ 466, 170 };
                 break;
@@ -463,18 +544,55 @@ void UpdateGame(void)
                 break;
             }
 
-            /* 接触到一楼门 → 出门到户外 */
+            /* 接触到一楼门 → 传送到室外地图 huwai1.tmj 的 home 传送点 */
             if (worldPlayer.onDoor)
             {
                 fadePhase = 1;
                 fadeAlpha = 0.0f;
                 fadeNeedCleanup = true;
                 fadeSwitchMap = true;
-                strncpy(fadeNextMap, "assets/maps/tootooo.tmj",
+                strncpy(fadeNextMap, "assets/maps/huwai1.tmj",
                         sizeof(fadeNextMap) - 1);
-                fadeNextSpawn = (Vector2){ 180, 400 };
+                /* 从 huwai1.tmj 的 chuansong 层查询 home 坐标 */
+                fadeNextSpawn = (Vector2){ 487.5f, 369.75f };
                 break;
             }
+
+            /* 接触到 huwai 的 chuansong 传送点 home2 → 返回室内 yilou */
+            if (worldPlayer.onChuansong && strcmp(worldPlayer.chuansongName, "home2") == 0)
+            {
+                fadePhase = 1;
+                fadeAlpha = 0.0f;
+                fadeNeedCleanup = true;
+                fadeSwitchMap = true;
+                strncpy(fadeNextMap, "assets/maps/yilou.tmj",
+                        sizeof(fadeNextMap) - 1);
+                /* 出生在室内门附近 */
+                fadeNextSpawn = (Vector2){ 128, 366 };
+                break;
+            }
+
+            /* 传送冷却计时器递减，到达新地图后短暂禁止传送以防止立即重新触发 */
+            if (teleportCooldown > 0.0f) {
+                teleportCooldown -= dt;
+            }
+
+            /* 接触到 huwai1 的 master home 传送点 → 传送到 guanzi 室内地图的 daoguannei 传送点 */
+            if (teleportCooldown <= 0.0f && worldPlayer.onChuansong && strcmp(worldPlayer.chuansongName, "master home") == 0)
+            {
+                fadePhase = 1;
+                fadeAlpha = 0.0f;
+                fadeNeedCleanup = true;
+                fadeSwitchMap = true;
+                strncpy(fadeNextMap,
+                        "assets/maps/guanzi.tmj",
+                        sizeof(fadeNextMap) - 1);
+                /* 按传送点名称在目标地图中自动查询出生坐标 */
+                strncpy(fadeNextSpawnName, "daoguannei",
+                        sizeof(fadeNextSpawnName) - 1);
+                break;
+            }
+
 
             UpdatePlayer(&worldPlayer, &worldMap, dt);
 
@@ -911,9 +1029,83 @@ void DrawGame(void)
             BeginMode2D(worldCamera);
 
             DrawMap(&worldMap);
+            DrawNpcs(&worldMap);
             DrawPlayer(&worldPlayer, &worldMap);
 
             EndMode2D();
+
+            /* --- NPC交互提示 --- */
+            if (worldPlayer.onNpc && !showSignDialog)
+            {
+                int sw = GetScreenWidth();
+                int sh = GetScreenHeight();
+                const char *hint = NULL;
+                if (strcmp(worldPlayer.npcType, "npc-boss") == 0)
+                    hint = "按 E 键挑战馆主";
+                else if (strcmp(worldPlayer.npcType, "npc-teacher") == 0)
+                    hint = "按 E 键对话";
+
+                if (hint) {
+                    Vector2 hintSz = MeasureTextEx(fontCN, hint, 18, 1);
+                    DrawRectangle(sw / 2 - (int)hintSz.x / 2 - 12, sh - 42,
+                                  (int)hintSz.x + 24, 34, (Color){ 0, 0, 0, 180 });
+                    DrawTextEx(fontCN, hint,
+                               (Vector2){ sw / 2 - hintSz.x / 2, sh - 38 },
+                               18, 1, (Color){ 255, 255, 100, 255 });
+                }
+            }
+
+            /* --- 标牌对话框 --- */
+            if (showSignDialog)
+            {
+                int sw = GetScreenWidth();
+                int sh = GetScreenHeight();
+                /* 半透明底部提示条 */
+                Rectangle tipRect = { 60, sh - 55, sw - 120, 40 };
+                DrawRectangleRec(tipRect, (Color){ 0, 0, 0, 180 });
+                DrawRectangleLinesEx(tipRect, 2, (Color){ 255, 255, 255, 200 });
+                const char *hint = "按空格键关闭";
+                Vector2 hintSz = MeasureTextEx(fontCN, hint, 18, 1);
+                DrawTextEx(fontCN, hint,
+                           (Vector2){ tipRect.x + (tipRect.width - hintSz.x) / 2,
+                                      tipRect.y + (tipRect.height - hintSz.y) / 2 },
+                           18, 1, LIGHTGRAY);
+
+                /* 对话框 */
+                Rectangle dlgRect = { 60, sh - 160, sw - 120, 100 };
+                DrawRectangleRec(dlgRect, (Color){ 0, 0, 0, 210 });
+                DrawRectangleLinesEx(dlgRect, 4, (Color){ 255, 255, 255, 220 });
+
+                /* 分行绘制文本 */
+                char line1[256] = "";
+                char line2[256] = "";
+                const char *src = signDialogText;
+                /* 查找换行符分割 */
+                const char *nl = strchr(src, '\n');
+                if (nl) {
+                    size_t len = nl - src;
+                    if (len >= sizeof(line1)) len = sizeof(line1) - 1;
+                    memcpy(line1, src, len);
+                    line1[len] = '\0';
+                    snprintf(line2, sizeof(line2), "%s", nl + 1);
+                } else {
+                    snprintf(line1, sizeof(line1), "%s", src);
+                }
+
+                Vector2 l1Sz = MeasureTextEx(fontCN, line1, 24, 1);
+                Vector2 l2Sz = MeasureTextEx(fontCN, line2, 24, 1);
+                float totalH = l1Sz.y + (line2[0] ? l2Sz.y + 4 : 0);
+                float startY = dlgRect.y + (dlgRect.height - totalH) / 2;
+
+                DrawTextEx(fontCN, line1,
+                           (Vector2){ dlgRect.x + (dlgRect.width - l1Sz.x) / 2, startY },
+                           24, 1, WHITE);
+                if (line2[0]) {
+                    DrawTextEx(fontCN, line2,
+                               (Vector2){ dlgRect.x + (dlgRect.width - l2Sz.x) / 2, startY + l1Sz.y + 4 },
+                               24, 1, WHITE);
+                }
+            }
 
         } break;
     }

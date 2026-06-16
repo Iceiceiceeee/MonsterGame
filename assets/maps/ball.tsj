@@ -1,0 +1,14 @@
+{ "columns":1,
+ "image":"..\/pokefirered_pngs\/timer_ball.png",
+ "imageheight":24,
+ "imagewidth":24,
+ "margin":0,
+ "name":"ball",
+ "spacing":0,
+ "tilecount":1,
+ "tiledversion":"1.12.1",
+ "tileheight":24,
+ "tilewidth":24,
+ "type":"tileset",
+ "version":"1.10"
+}

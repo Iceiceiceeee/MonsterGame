@@ -11,11 +11,11 @@
 
 /* ========== 动画与碰撞体积常量 ========== */
 
-#define FRAME_DURATION    0.2f   /* 每帧动画持续时长（秒） */
-#define PLAYER_VISUAL_W   56.0f  /* 玩家贴图绘制宽度（像素） */
-#define PLAYER_VISUAL_H   72.0f  /* 玩家贴图绘制高度（像素） */
-#define PLAYER_COLLIDE_W  24.0f  /* 碰撞盒宽度（比视觉宽小，留出余量） */
-#define PLAYER_COLLIDE_H  16.0f  /* 碰撞盒高度（放在角色底部） */
+#define FRAME_DURATION        0.2f   /* 每帧动画持续时长（秒） */
+#define PLAYER_BASE_VISUAL_W  56.0f  /* 玩家贴图基础绘制宽度（缩放前） */
+#define PLAYER_BASE_VISUAL_H  72.0f  /* 玩家贴图基础绘制高度（缩放前） */
+#define PLAYER_BASE_COLLIDE_W 24.0f  /* 碰撞盒基础宽度（缩放前） */
+#define PLAYER_BASE_COLLIDE_H 16.0f  /* 碰撞盒基础高度（缩放前） */
 
 /* ========== 初始化 ========== */
 
@@ -31,9 +31,10 @@
 void InitPlayer(Player *p, Vector2 spawn, Map *map)
 {
     memset(p, 0, sizeof(*p));
-    p->pos  = spawn;
-    p->size = (Vector2){ PLAYER_VISUAL_W, PLAYER_VISUAL_H };
-    p->dir  = DIR_DOWN;
+    p->pos   = spawn;
+    p->scale = map->playerScale;
+    p->size  = (Vector2){ PLAYER_BASE_VISUAL_W * p->scale, PLAYER_BASE_VISUAL_H * p->scale };
+    p->dir   = DIR_DOWN;
     p->walkSpeed  = 80.0f;
     p->runSpeed   = 180.0f;
     p->animFrames = map->animFrontLow;
@@ -52,11 +53,13 @@ void InitPlayer(Player *p, Vector2 spawn, Map *map)
  */
 static Rectangle playerCollideRect(const Player *p)
 {
+    float cw = PLAYER_BASE_COLLIDE_W * p->scale;
+    float ch = PLAYER_BASE_COLLIDE_H * p->scale;
     return (Rectangle){
-        p->pos.x + (p->size.x - PLAYER_COLLIDE_W) / 2,
-        p->pos.y + p->size.y - PLAYER_COLLIDE_H,
-        PLAYER_COLLIDE_W,
-        PLAYER_COLLIDE_H
+        p->pos.x + (p->size.x - cw) / 2,
+        p->pos.y + p->size.y - ch,
+        cw,
+        ch
     };
 }
 
@@ -258,6 +261,26 @@ void UpdatePlayer(Player *p, Map *map, float dt)
             break;
         }
     }
+
+    /* --- 第十步：chuansong（传送点）检测 --- */
+    Rectangle csRects[MAX_SOLID_RECTS];
+    int csCount = GetChuansongRects(map, csRects, MAX_SOLID_RECTS);
+    p->onChuansong = false;
+    p->chuansongName[0] = '\0';
+    for (int i = 0; i < csCount; i++) {
+        if (rectsOverlap(footRect, csRects[i])) {
+            p->onChuansong = true;
+            /* 直接从 MapObject 列表中查询传送点名称（支持任意大小的触发区域） */
+            GetChuansongName(map, footRect, p->chuansongName, sizeof(p->chuansongName));
+            break;
+        }
+    }
+
+    /* --- 第十一步：标牌检测 --- */
+    p->onSign = GetSignName(map, footRect, p->signName, sizeof(p->signName));
+
+    /* --- 第十二步：NPC检测 --- */
+    p->onNpc = GetNpcInfo(map, footRect, p->npcType, sizeof(p->npcType));
 }
 
 /* ========== 绘制 ========== */

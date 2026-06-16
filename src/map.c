@@ -180,6 +180,11 @@ Map LoadMap(const char *filepath)
     map.height      = cJSON_GetObjectItem(root, "height")->valueint;
     map.tileWidth   = cJSON_GetObjectItem(root, "tilewidth")->valueint;
     map.tileHeight  = cJSON_GetObjectItem(root, "tileheight")->valueint;
+    map.playerScale = 1.0f;   /* 默认正常大小 */
+
+    /* --- 准备全地图瓦片数组 --- */
+    map.dataSize = map.width * map.height;
+    map.floorData = calloc(map.dataSize, sizeof(int));
 
     /* --- 遍历图层，解析各层数据 --- */
     cJSON *layers = cJSON_GetObjectItem(root, "layers");
@@ -198,27 +203,53 @@ Map LoadMap(const char *filepath)
             resolveFullPath(fullPath, sizeof(fullPath), imgPath);
             Image img = LoadImage(fullPath);
             if (img.data) {
-                /* 将背景图拉伸至全地图大小 */
                 ImageResize(&img, map.width * map.tileWidth, map.height * map.tileHeight);
                 map.backImage = LoadTextureFromImage(img);
                 UnloadImage(img);
                 map.hasBackImage = true;
             }
         }
-        /* 地板图层（tilelayer "floor"） */
-        else if (strcmp(type, "tilelayer") == 0 && strcmp(name, "floor") == 0) {
-            cJSON *dataArr = cJSON_GetObjectItem(layer, "data");
-            if (dataArr && cJSON_IsArray(dataArr)) {
-                map.dataSize = cJSON_GetArraySize(dataArr);
-                map.floorData = malloc(sizeof(int) * map.dataSize);
-                for (int i = 0; i < map.dataSize; i++) {
-                    cJSON *elem = cJSON_GetArrayItem(dataArr, i);
-                    map.floorData[i] = elem ? elem->valueint : 0;
+        /* 瓦片图层：合并所有 tilelayer 到 floorData（后层覆盖前层） */
+        else if (strcmp(type, "tilelayer") == 0) {
+            /* 无限地图格式：从 chunks 组装数据 */
+            cJSON *chunksArr = cJSON_GetObjectItem(layer, "chunks");
+            if (chunksArr && cJSON_IsArray(chunksArr)) {
+                cJSON *chunk = NULL;
+                cJSON_ArrayForEach(chunk, chunksArr) {
+                    int cx = cJSON_GetObjectItem(chunk, "x")->valueint;
+                    int cy = cJSON_GetObjectItem(chunk, "y")->valueint;
+                    int cw = cJSON_GetObjectItem(chunk, "width")->valueint;
+                    int ch = cJSON_GetObjectItem(chunk, "height")->valueint;
+                    cJSON *cdata = cJSON_GetObjectItem(chunk, "data");
+                    if (!cdata || !cJSON_IsArray(cdata)) continue;
+                    for (int row = 0; row < ch; row++) {
+                        for (int col = 0; col < cw; col++) {
+                            int mapX = cx + col;
+                            int mapY = cy + row;
+                            if (mapX >= 0 && mapX < map.width && mapY >= 0 && mapY < map.height) {
+                                int idx = mapY * map.width + mapX;
+                                cJSON *elem = cJSON_GetArrayItem(cdata, row * cw + col);
+                                int gid = elem ? elem->valueint : 0;
+                                if (gid != 0) map.floorData[idx] = gid;
+                            }
+                        }
+                    }
+                }
+            } else {
+                /* 有限地图格式：从 data 数组读取 */
+                cJSON *dataArr = cJSON_GetObjectItem(layer, "data");
+                if (dataArr && cJSON_IsArray(dataArr)) {
+                    int layerSize = cJSON_GetArraySize(dataArr);
+                    for (int i = 0; i < layerSize && i < map.dataSize; i++) {
+                        cJSON *elem = cJSON_GetArrayItem(dataArr, i);
+                        int gid = elem ? elem->valueint : 0;
+                        if (gid != 0) map.floorData[i] = gid;
+                    }
                 }
             }
         }
         /* 玩家出生点层（objectgroup "player"） */
-        if (strcmp(type, "objectgroup") == 0 && strcmp(name, "player") == 0) {
+        else if (strcmp(type, "objectgroup") == 0 && strcmp(name, "player") == 0) {
             cJSON *objects = cJSON_GetObjectItem(layer, "objects");
             cJSON *obj = NULL;
             cJSON_ArrayForEach(obj, objects) {
@@ -229,15 +260,95 @@ Map LoadMap(const char *filepath)
                 break;
             }
         }
-        /* 对象层（解析所有 objectgroup 层中的对象，player 层除外） */
-        else if (strcmp(type, "objectgroup") == 0 && strcmp(name, "player") != 0) {
+        /* 传送点层（objectgroup "chuansong"） —— 解析命名传送点，同时作为触发区域 */
+        else if (strcmp(type, "objectgroup") == 0 && strcmp(name, "chuansong") == 0) {
+            cJSON *objects = cJSON_GetObjectItem(layer, "objects");
+            cJSON *obj = NULL;
+            cJSON_ArrayForEach(obj, objects) {
+                float ox = (float)cJSON_GetObjectItem(obj, "x")->valuedouble;
+                float oy = (float)cJSON_GetObjectItem(obj, "y")->valuedouble;
+
+                /* 登记命名传送点 */
+                cJSON *props = cJSON_GetObjectItem(obj, "properties");
+                if (props && cJSON_IsArray(props)) {
+                    cJSON *prop = NULL;
+                    cJSON_ArrayForEach(prop, props) {
+                        const char *pname = cJSON_GetObjectItem(prop, "name")->valuestring;
+                        cJSON *pval = cJSON_GetObjectItem(prop, "value");
+                        if (pval && cJSON_IsTrue(pval)) {
+                            if (map.teleportSpawnCount < MAX_TELEPORT_SPAWNS) {
+                                TeleportSpawn *ts = &map.teleportSpawns[map.teleportSpawnCount];
+                                strncpy(ts->name, pname, sizeof(ts->name) - 1);
+                                ts->pos.x = ox;
+                                ts->pos.y = oy;
+                                map.teleportSpawnCount++;
+                            }
+                            /* 同时作为触发区域添加到对象列表（48x48 触发区） */
+                            if (map.objectCount < MAX_MAP_OBJECTS) {
+                                MapObject *mo = &map.objects[map.objectCount];
+                                strncpy(mo->type, "chuansong", sizeof(mo->type) - 1);
+                                strncpy(mo->name, pname, sizeof(mo->name) - 1);
+                                mo->rect = (Rectangle){ ox - 24, oy - 24, 48, 48 };
+                                map.objectCount++;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        /* NPC 专用对象层（objectgroup "npc"）—— 解析NPC精灵对象 */
+        else if (strcmp(type, "objectgroup") == 0 && strcmp(name, "npc") == 0) {
+            cJSON *objects = cJSON_GetObjectItem(layer, "objects");
+            cJSON *obj = NULL;
+            cJSON_ArrayForEach(obj, objects) {
+                if (map.npcCount >= MAX_NPC_OBJECTS) break;
+                MapNpc *npc = &map.npcs[map.npcCount];
+
+                cJSON *gidNode = cJSON_GetObjectItem(obj, "gid");
+                if (!gidNode) continue;  /* 无GID的不是精灵对象，跳过 */
+                npc->gid = gidNode->valueint;
+
+                npc->rect.x      = (float)cJSON_GetObjectItem(obj, "x")->valuedouble;
+                npc->rect.y      = (float)cJSON_GetObjectItem(obj, "y")->valuedouble;
+                npc->rect.width  = (float)cJSON_GetObjectItem(obj, "width")->valuedouble;
+                npc->rect.height = (float)cJSON_GetObjectItem(obj, "height")->valuedouble;
+
+                /* 从 properties 提取NPC类型 */
+                npc->type[0] = '\0';
+                cJSON *props = cJSON_GetObjectItem(obj, "properties");
+                if (props && cJSON_IsArray(props)) {
+                    cJSON *prop = NULL;
+                    cJSON_ArrayForEach(prop, props) {
+                        const char *pname = cJSON_GetObjectItem(prop, "name")->valuestring;
+                        cJSON *pval       = cJSON_GetObjectItem(prop, "value");
+                        if (pval && cJSON_IsTrue(pval)) {
+                            if (strncmp(pname, "npc-", 4) == 0) {
+                                strncpy(npc->type, pname, sizeof(npc->type) - 1);
+                            }
+                        }
+                    }
+                }
+                /* 无属性的NPC对象默认设为 solid 交互对象，加入 objects 列表 */
+                if (npc->type[0] == '\0') {
+                    if (map.objectCount < MAX_MAP_OBJECTS) {
+                        MapObject *mo = &map.objects[map.objectCount];
+                        strncpy(mo->type, "solid", sizeof(mo->type) - 1);
+                        mo->rect = npc->rect;
+                        map.objectCount++;
+                    }
+                }
+                map.npcCount++;
+            }
+        }
+        /* 对象层（解析所有 objectgroup 层中的对象，player/chuansong/npc 层除外） */
+        else if (strcmp(type, "objectgroup") == 0 && strcmp(name, "player") != 0 && strcmp(name, "chuansong") != 0 && strcmp(name, "npc") != 0) {
             cJSON *objects = cJSON_GetObjectItem(layer, "objects");
             cJSON *obj = NULL;
             cJSON_ArrayForEach(obj, objects) {
                 if (map.objectCount >= MAX_MAP_OBJECTS) break;
                 MapObject *mo = &map.objects[map.objectCount];
 
-                /* 跳过带有 gid 的瓦片对象（玩家精灵表占位），不当作碰撞对象 */
+                /* 跳过带有 gid 的瓦片对象，不当作碰撞对象 */
                 if (cJSON_GetObjectItem(obj, "gid")) continue;
 
                 mo->rect.x      = (float)cJSON_GetObjectItem(obj, "x")->valuedouble;
@@ -245,7 +356,7 @@ Map LoadMap(const char *filepath)
                 mo->rect.width  = (float)cJSON_GetObjectItem(obj, "width")->valuedouble;
                 mo->rect.height = (float)cJSON_GetObjectItem(obj, "height")->valuedouble;
 
-                /* 从 properties 中提取对象类型（如 solid/stairs/door） */
+                /* 从 properties 中提取对象类型（如 solid/stairs/door/传送点名） */
                 cJSON *props = cJSON_GetObjectItem(obj, "properties");
                 if (props && cJSON_IsArray(props)) {
                     cJSON *prop = NULL;
@@ -253,10 +364,39 @@ Map LoadMap(const char *filepath)
                         const char *pname  = cJSON_GetObjectItem(prop, "name")->valuestring;
                         cJSON *pval        = cJSON_GetObjectItem(prop, "value");
                         if (pval && cJSON_IsTrue(pval)) {
-                            /* 属性名为 true 即表示该对象的类型 */
-                            strncpy(mo->type, pname, sizeof(mo->type) - 1);
+                            /* 判断是否为已知碰撞/交互类型 */
+                            bool isCollision = (strcmp(pname, "solid") == 0 ||
+                                               strcmp(pname, "door") == 0 ||
+                                               strcmp(pname, "stairs") == 0 ||
+                                               strcmp(pname, "road") == 0 ||
+                                               strcmp(pname, "water") == 0 ||
+                                               strncmp(pname, "sign", 4) == 0);
+                            if (isCollision) {
+                                strncpy(mo->type, pname, sizeof(mo->type) - 1);
+                            } else {
+                                /* 非碰撞属性 → 作为 chuansong 传送点处理 */
+                                strncpy(mo->type, "chuansong", sizeof(mo->type) - 1);
+                                strncpy(mo->name, pname, sizeof(mo->name) - 1);
+                                /* 点对象（width/height 为 0）自动扩展为 48x48 触发区 */
+                                if (mo->rect.width <= 0) mo->rect.width = 48;
+                                if (mo->rect.height <= 0) mo->rect.height = 48;
+                                mo->rect.x -= mo->rect.width / 2;
+                                mo->rect.y -= mo->rect.height / 2;
+                                /* 同时注册 TeleportSpawn 供 player.c 按名匹配 */
+                                if (map.teleportSpawnCount < MAX_TELEPORT_SPAWNS) {
+                                    TeleportSpawn *ts = &map.teleportSpawns[map.teleportSpawnCount];
+                                    strncpy(ts->name, pname, sizeof(ts->name) - 1);
+                                    ts->pos.x = mo->rect.x + mo->rect.width / 2;
+                                    ts->pos.y = mo->rect.y + mo->rect.height / 2;
+                                    map.teleportSpawnCount++;
+                                }
+                            }
                         }
                     }
+                }
+                /* 没有明确类型的对象默认视为 solid 障碍物 */
+                if (mo->type[0] == '\0') {
+                    strncpy(mo->type, "solid", sizeof(mo->type) - 1);
                 }
                 map.objectCount++;
             }
@@ -293,8 +433,20 @@ Map LoadMap(const char *filepath)
                 } else if (firstGid == 946) {
                     strncpy(imgRelPath, "6abad8d14de667fabaecfea4a7242f82.png", sizeof(imgRelPath));
                     cols = 35; tileW = 16; tileH = 16;
+                } else if (firstGid == 991) {
+                    strncpy(imgRelPath, "lance_副本.png", sizeof(imgRelPath));
+                    cols = 3; tileW = 16; tileH = 16;
                 } else if (firstGid == 1786) {
                     strncpy(imgRelPath, "player_sheet.png", sizeof(imgRelPath));
+                    cols = 14; tileW = 16; tileH = 20;
+                } else if (firstGid == 2561) {
+                    strncpy(imgRelPath, "sucai/dixing.png", sizeof(imgRelPath));
+                    cols = 23; tileW = 16; tileH = 16;
+                } else if (firstGid == 3366) {
+                    strncpy(imgRelPath, "sucai/tall_grass.png", sizeof(imgRelPath));
+                    cols = 1; tileW = 16; tileH = 16;
+                } else if (firstGid == 3371) {
+                    strncpy(imgRelPath, "sucai/green_surf_run_副本.png", sizeof(imgRelPath));
                     cols = 14; tileW = 16; tileH = 20;
                 } else {
                     continue;
@@ -336,13 +488,65 @@ Map LoadMap(const char *filepath)
         }
     }
 
+    /* --- 自动检测 solid 瓦片GID --- */
+    /* 在 floorData 中出现频次最高的外层GID通常为墙壁/不可通行瓦片 */
+    /* 方法：统计GID出现次数，将地图边缘高频GID标记为solid */
+    {
+        int gidFreq[4096] = {0};  /* 简单直方图，GID不超过4096 */
+        for (int i = 0; i < map.dataSize; i++) {
+            int gid = map.floorData[i];
+            if (gid > 0 && gid < 4096) gidFreq[gid]++;
+        }
+        /* 检测地图四边高频GID用作solid */
+        map.solidGidCount = 0;
+        for (int gid = 1; gid < 4096 && map.solidGidCount < MAX_SOLID_TILES; gid++) {
+            if (gidFreq[gid] == 0) continue;
+            /* 统计该GID在边缘的密度 */
+            int edgeCount = 0, totalForGid = gidFreq[gid];
+            for (int x = 0; x < map.width; x++) {
+                if (map.floorData[0 * map.width + x] == gid) edgeCount++;
+                if (map.floorData[(map.height-1) * map.width + x] == gid) edgeCount++;
+            }
+            for (int y = 0; y < map.height; y++) {
+                if (map.floorData[y * map.width + 0] == gid) edgeCount++;
+                if (map.floorData[y * map.width + (map.width-1)] == gid) edgeCount++;
+            }
+            /* 如果该GID在边缘出现超过总出现次数的15%，认为是墙壁 */
+            if (totalForGid > 10 && edgeCount > totalForGid * 0.15f) {
+                map.solidGids[map.solidGidCount++] = gid;
+            }
+            /* 同时：如果该GID形成长连续水平/垂直条（>5个连续），也标记为solid */
+            for (int y = 0; y < map.height; y++) {
+                int run = 0;
+                for (int x = 0; x < map.width; x++) {
+                    if (map.floorData[y * map.width + x] == gid) {
+                        run++;
+                        if (run >= 5) {
+                            /* 找到长条状GID，添加为solid */
+                            bool already = false;
+                            for (int s = 0; s < map.solidGidCount; s++) {
+                                if (map.solidGids[s] == gid) { already = true; break; }
+                            }
+                            if (!already && map.solidGidCount < MAX_SOLID_TILES) {
+                                map.solidGids[map.solidGidCount++] = gid;
+                            }
+                            break;
+                        }
+                    } else { run = 0; }
+                }
+                if (run >= 5) { y = map.height; break; } /* 已找到，跳出 */
+            }
+        }
+    }
+
     /* --- 默认玩家出生点（若未找到玩家对象） --- */
     if (map.playerSpawn.x == 0 && map.playerSpawn.y == 0) {
         map.playerSpawn.x = (float)(map.width * map.tileWidth) / 2;
         map.playerSpawn.y = (float)(map.height * map.tileHeight) / 2;
     }
 
-    /* --- 玩家动画帧表（tile ID 对应 sprite sheet 中的位置） --- */
+	/* --- 玩家动画帧表（tile ID 对应 sprite sheet 中的位置） --- */
+    /* 默认值：标准宝可梦精灵表布局 (14列, 每个方向3帧连续排列) */
     map.animFrontLow[0]  = 0;  map.animFrontLow[1]  = 12; map.animFrontLow[2]  = 13;
     map.animFrontFast[0] = 3;  map.animFrontFast[1] = 4;  map.animFrontFast[2] = 5;
     map.animBack[0]      = 6;  map.animBack[1]      = 7;  map.animBack[2]      = 8;
@@ -368,6 +572,95 @@ void UnloadMap(Map *map)
     }
     if (map->hasBackImage) UnloadTexture(map->backImage);
     memset(map, 0, sizeof(*map));
+}
+
+/* ======================== NPC 绘制 ======================== */
+
+/**
+ * DrawNpcs - 绘制地图上的所有NPC精灵对象
+ * @map: 地图指针
+ *
+ * 遍历NPC列表，根据GID从tileset中找到对应贴图并绘制。
+ */
+static Rectangle tileSourceRect(int gid, int firstGid, int cols, int tileW, int tileH);
+
+void DrawNpcs(Map *map)
+{
+    for (int i = 0; i < map->npcCount; i++) {
+        MapNpc *npc = &map->npcs[i];
+        int gid = npc->gid;
+        if (gid == 0) continue;
+
+        /* 查找GID所属的tileset */
+        TilesetInfo *ts = NULL;
+        for (int j = 0; j < map->tilesetCount; j++) {
+            if (gid >= map->tilesets[j].firstGid) {
+                if (!ts || map->tilesets[j].firstGid > ts->firstGid)
+                    ts = &map->tilesets[j];
+            }
+        }
+
+        if (ts && ts->texture.id > 0) {
+            Rectangle src = tileSourceRect(gid, ts->firstGid, ts->cols,
+                                           ts->tileW, ts->tileH);
+            Rectangle dst = npc->rect;
+            DrawTexturePro(ts->texture, src, dst, (Vector2){0, 0}, 0.0f, WHITE);
+        }
+    }
+}
+
+/* ======================== NPC 交互查询 ======================== */
+
+/**
+ * GetNpcRects - 获取所有NPC的交互矩形
+ */
+int GetNpcRects(Map *map, Rectangle *out, int maxCount)
+{
+    int count = 0;
+    for (int i = 0; i < map->npcCount && count < maxCount; i++) {
+        /* 扩大交互检测范围 */
+        Rectangle r = map->npcs[i].rect;
+        r.x -= 16; r.y -= 16;
+        r.width += 32; r.height += 32;
+        out[count++] = r;
+    }
+    return count;
+}
+
+/**
+ * GetNpcInfo - 查找与给定矩形重叠的NPC信息
+ */
+bool GetNpcInfo(Map *map, Rectangle rect, char *type, int size)
+{
+    for (int i = 0; i < map->npcCount; i++) {
+        Rectangle nr = map->npcs[i].rect;
+        /* 扩大检测区域 */
+        nr.x -= 24; nr.y -= 24;
+        nr.width += 48; nr.height += 48;
+        if (rect.x < nr.x + nr.width &&
+            rect.x + rect.width > nr.x &&
+            rect.y < nr.y + nr.height &&
+            rect.y + rect.height > nr.y)
+        {
+            strncpy(type, map->npcs[i].type, size - 1);
+            type[size - 1] = '\0';
+            return true;
+        }
+    }
+    return false;
+}
+
+/* ======================== Solid GID 查询 ======================== */
+
+/**
+ * IsGidSolid - 检查给定的GID是否为solid（不可通行）瓦片
+ */
+bool IsGidSolid(Map *map, int gid)
+{
+    for (int i = 0; i < map->solidGidCount; i++) {
+        if (map->solidGids[i] == gid) return true;
+    }
+    return false;
 }
 
 /* ======================== 绘制 ======================== */
@@ -454,17 +747,77 @@ void DrawMap(Map *map)
  *
  * 遍历地图对象，筛选出 type == "solid" 的对象，
  * 将其矩形区域填入 out 数组。
+ * 同时从 floorData 中检测 solidGids 对应的瓦片矩形。
  *
  * 返回实际找到的 solid 矩形数量。
  */
 int GetSolidRects(Map *map, Rectangle *out, int maxCount)
 {
     int count = 0;
+
+    /* 1. 从 MapObject 中收集 solid 矩形 */
     for (int i = 0; i < map->objectCount && count < maxCount; i++) {
         if (strncmp(map->objects[i].type, "solid", 5) == 0) {
             out[count++] = map->objects[i].rect;
         }
     }
+
+    /* 2. 从 floorData 中收集 solidGid 对应的瓦片矩形（合并相邻） */
+    if (map->solidGidCount > 0 && count < maxCount) {
+        bool *visited = (bool*)calloc(map->dataSize, sizeof(bool));
+        if (visited) {
+            for (int y = 0; y < map->height && count < maxCount; y++) {
+                for (int x = 0; x < map->width && count < maxCount; x++) {
+                    int idx = y * map->width + x;
+                    if (visited[idx]) continue;
+                    int gid = map->floorData[idx];
+                    if (!IsGidSolid(map, gid)) continue;
+
+                    /* 扩展水平连续solid块 */
+                    int endX = x;
+                    while (endX + 1 < map->width) {
+                        int nidx = y * map->width + (endX + 1);
+                        int ngid = map->floorData[nidx];
+                        if (IsGidSolid(map, ngid) && ngid == gid && !visited[nidx])
+                            endX++;
+                        else break;
+                    }
+                    /* 尝试扩展垂直方向（仅当整行对齐时） */
+                    int endY = y;
+                    for (int vy = y + 1; vy < map->height; vy++) {
+                        bool fullRow = true;
+                        for (int vx = x; vx <= endX; vx++) {
+                            int vidx = vy * map->width + vx;
+                            int vgid = map->floorData[vidx];
+                            if (!IsGidSolid(map, vgid) || vgid != gid || visited[vidx]) {
+                                fullRow = false;
+                                break;
+                            }
+                        }
+                        if (fullRow) endY = vy;
+                        else break;
+                    }
+
+                    /* 标记已访问 */
+                    for (int vy = y; vy <= endY; vy++) {
+                        for (int vx = x; vx <= endX; vx++) {
+                            visited[vy * map->width + vx] = true;
+                        }
+                    }
+
+                    /* 添加合并后的矩形 */
+                    out[count++] = (Rectangle){
+                        (float)(x * map->tileWidth),
+                        (float)(y * map->tileHeight),
+                        (float)((endX - x + 1) * map->tileWidth),
+                        (float)((endY - y + 1) * map->tileHeight)
+                    };
+                }
+            }
+            free(visited);
+        }
+    }
+
     return count;
 }
 
@@ -510,4 +863,78 @@ int GetStairFirstRects(Map *map, Rectangle *out, int maxCount)
         }
     }
     return count;
+}
+
+int GetChuansongRects(Map *map, Rectangle *out, int maxCount)
+{
+    int count = 0;
+    for (int i = 0; i < map->objectCount && count < maxCount; i++) {
+        if (strcmp(map->objects[i].type, "chuansong") == 0) {
+            out[count++] = map->objects[i].rect;
+        }
+    }
+    return count;
+}
+
+int GetSignRects(Map *map, Rectangle *out, int maxCount)
+{
+    int count = 0;
+    for (int i = 0; i < map->objectCount && count < maxCount; i++) {
+        if (strncmp(map->objects[i].type, "sign", 4) == 0) {
+            out[count++] = map->objects[i].rect;
+        }
+    }
+    return count;
+}
+
+bool GetSignName(Map *map, Rectangle rect, char *name, int size)
+{
+    for (int i = 0; i < map->objectCount; i++) {
+        if (strncmp(map->objects[i].type, "sign", 4) == 0) {
+            Rectangle sr = map->objects[i].rect;
+            /* 扩大一点检测区域，方便玩家触发 */
+            sr.x -= 8; sr.y -= 8;
+            sr.width += 16; sr.height += 16;
+            if (rect.x < sr.x + sr.width &&
+                rect.x + rect.width > sr.x &&
+                rect.y < sr.y + sr.height &&
+                rect.y + rect.height > sr.y)
+            {
+                strncpy(name, map->objects[i].type, size - 1);
+                name[size - 1] = '\0';
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool GetChuansongName(Map *map, Rectangle rect, char *name, int size)
+{
+    for (int i = 0; i < map->objectCount; i++) {
+        if (strcmp(map->objects[i].type, "chuansong") == 0) {
+            Rectangle sr = map->objects[i].rect;
+            if (rect.x < sr.x + sr.width &&
+                rect.x + rect.width > sr.x &&
+                rect.y < sr.y + sr.height &&
+                rect.y + rect.height > sr.y)
+            {
+                strncpy(name, map->objects[i].name, size - 1);
+                name[size - 1] = '\0';
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool FindTeleportSpawn(Map *map, const char *name, Vector2 *pos)
+{
+    for (int i = 0; i < map->teleportSpawnCount; i++) {
+        if (strcmp(map->teleportSpawns[i].name, name) == 0) {
+            *pos = map->teleportSpawns[i].pos;
+            return true;
+        }
+    }
+    return false;
 }

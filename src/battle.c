@@ -268,6 +268,7 @@ static int  animPhase = 0;       /**< 动画子阶段 (0~3) */
 static int  storedDamage = 0;    /**< 暂存伤害值 */
 static char messageText[256] = "";  /**< 对话框文本 */
 static bool battleFinished = false; /**< 战斗是否结束 */
+static bool isBossBattle   = false; /**< 是否为boss战 */
 
 /* ======================== 内部函数声明 ======================== */
 
@@ -488,7 +489,10 @@ static void InitBattleData(void) {
     /* 对手: 化石翼龙 (#2) Lv28 */
     InitPokemonFromDB(&enemyPoke, 2, 28);
 
-    snprintf(messageText, sizeof(messageText), "野生的 %s 出现了!", enemyPoke.name);
+    if (isBossBattle)
+        snprintf(messageText, sizeof(messageText), "boss派出了 %s!", enemyPoke.name);
+    else
+        snprintf(messageText, sizeof(messageText), "野生的 %s 出现了!", enemyPoke.name);
     subState = STATE_INTRO;
     cursorPos = 0;
     battleFinished = false;
@@ -647,7 +651,8 @@ static void UpdateBattleLogic(void) {
                 /* phase 1: 停顿, 检查敌方是否倒下 */
                 if (animTimer > 30) {
                     if (enemyPoke.hp_current <= 0) {
-                        snprintf(messageText, sizeof(messageText), "野生的 %s 倒下了! 你赢了!", enemyPoke.name);
+                        snprintf(messageText, sizeof(messageText), "%s %s 倒下了! 你赢了!",
+                                 isBossBattle ? "boss的" : "野生的", enemyPoke.name);
                         subState = STATE_MESSAGE;
                         battleFinished = true;
                     } else {
@@ -670,8 +675,8 @@ enemyTurn:
                         /* 敌方命中判定 */
                         int eAcc = enemyPoke.move_accuracy[best];
                         if ((rand() % 100) >= eAcc) {
-                            snprintf(messageText, sizeof(messageText), "野生的 %s 使用了 %s，但是没有命中!",
-                                     enemyPoke.name, enemyPoke.moves[best]);
+                            snprintf(messageText, sizeof(messageText), "%s %s 使用了 %s，但是没有命中!",
+                                     isBossBattle ? "boss的" : "野生的", enemyPoke.name, enemyPoke.moves[best]);
                             animPhase = 4; animTimer = 0;
                         } else {
                             float eMult; int eCrit;
@@ -685,8 +690,8 @@ enemyTurn:
                             playerPoke.hp_current -= eDmg;
                             if (playerPoke.hp_current < 0) playerPoke.hp_current = 0;
 
-                            snprintf(messageText, sizeof(messageText), "野生的 %s 使用了 %s! 造成 %d 点伤害!%s",
-                                     enemyPoke.name, enemyPoke.moves[best], eDmg, eExtra);
+                            snprintf(messageText, sizeof(messageText), "%s %s 使用了 %s! 造成 %d 点伤害!%s",
+                                     isBossBattle ? "boss的" : "野生的", enemyPoke.name, enemyPoke.moves[best], eDmg, eExtra);
                         }
                     }
                 }
@@ -1132,11 +1137,12 @@ static void DrawMessageBox(void) {
  * @param bc   战斗上下文 (当前版本使用内部全局变量, 此参数保留给后续重构)
  * @param font 中文字体 (由 game.c 的 InitGame 加载传入)
  */
-void InitBattle(BattleContext *bc, Font font) {
+void InitBattle(BattleContext *bc, Font font, bool isBoss) {
     (void)bc;
 
     srand((unsigned int)time(NULL));  /* 随机种子 */
 
+    isBossBattle = isBoss;
     fontBattle = font;
     hasFont = (font.texture.id > 0);
 

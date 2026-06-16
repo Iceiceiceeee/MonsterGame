@@ -13,7 +13,7 @@ REM    make_run.bat clean    → 清理 build 目录
 REM ============================================
 
 REM 将 MSYS2 的 MinGW64 和核心工具路径添加到 PATH 环境变量中
-set PATH=C:\msys64\mingw64\bin;C:\msys64\usr\bin;%PATH%
+set PATH=C:\msys64\ucrt64\bin;C:\msys64\usr\bin;%PATH%
 
 REM 根据传入的参数执行对应的 make 命令
 REM 如果未传入参数，则默认执行 make（编译项目）
