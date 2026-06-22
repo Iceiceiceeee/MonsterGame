@@ -170,6 +170,24 @@
                  "width":143.5,
                  "x":176,
                  "y":287.5
+                },
+                {
+                 "height":32,
+                 "id":28,
+                 "name":"",
+                 "opacity":1,
+                 "properties":[
+                        {
+                         "name":"huwai-exit",
+                         "type":"bool",
+                         "value":true
+                        }],
+                 "rotation":0,
+                 "type":"",
+                 "visible":true,
+                 "width":144,
+                 "x":176,
+                 "y":308
                 }],
          "opacity":1,
          "type":"objectgroup",

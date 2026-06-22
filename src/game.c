@@ -57,6 +57,7 @@ static Vector2   mousePoint;     /**< 当前鼠标位置坐标 */
 
 static Font      fontCN;         /**< 中文字体（黑体） */
 static Texture2D masterTex;      /**< 人物纹理精灵图 */
+static Texture2D titleBg;        /**< 标题界面背景图 */
 
 /* ------------------------- 状态数据 ------------------------- */
 
@@ -101,6 +102,12 @@ static float      teleportCooldown;     /**< 传送后冷却计时器，防止�
 /* ------------------------- 当前地图追踪 ------------------------- */
 
 static char currentMapPath[256];  /**< 当前加载的地图文件路径 */
+
+/* ------------------------- 背景音乐 ------------------------- */
+
+static Music bgm;                /**< 地图背景音乐 */
+static Music battleBgm;          /**< 战斗背景音乐 */
+static GameState prevState;      /**< 上一帧的游戏状态（用于检测状态切换） */
 
 /* ======================== 初始化 ======================== */
 
@@ -170,6 +177,13 @@ void InitGame(void)
 
     UnloadCodepoints(codepoints);  /* 释放临时码点数组 */
 
+    /* ---------- 加载标题背景 ---------- */
+    Image bgImg = LoadImage("assets/title_bg.png");
+    ImageResize(&bgImg, 960, 640);               /* 缩放到窗口大小 */
+    titleBg = LoadTextureFromImage(bgImg);
+    UnloadImage(bgImg);
+    SetTextureFilter(titleBg, TEXTURE_FILTER_POINT);
+
     /* ---------- 加载宝可梦数据库 ---------- */
     LoadMoveDB();
     LoadPokemonDB();
@@ -209,6 +223,17 @@ void InitGame(void)
     RL_FREE(pixels);
     UnloadImage(img);
     SetTextureFilter(masterTex, TEXTURE_FILTER_POINT);            /* 像素风：点采样过滤 */
+
+    /* ---------- 加载背景音乐 ---------- */
+    bgm = LoadMusicStream("assets/bgm_city.mp3");
+    bgm.looping = true;                       /* 循环播放 */
+    SetMusicVolume(bgm, 0.4f);                /* 音量 40%，避免盖过音效 */
+
+    battleBgm = LoadMusicStream("assets/bgm_battle.mp3");
+    battleBgm.looping = true;                 /* 循环播放 */
+    SetMusicVolume(battleBgm, 0.5f);          /* 音量 50% */
+
+    prevState = GAME_TITLE;                   /* 记录初始状态 */
 }
 
 /* ======================== 逻辑更新 ======================== */
@@ -225,6 +250,9 @@ void InitGame(void)
 void UpdateGame(void)
 {
     float dt = GetFrameTime();
+
+    UpdateMusicStream(bgm);                   /* 每帧更新音乐流缓冲 */
+    UpdateMusicStream(battleBgm);             /* 每帧更新战斗音乐流缓冲 */
 
     /* ========== 转场淡入淡出处理 ========== */
     if (fadePhase == 1)
@@ -593,6 +621,20 @@ void UpdateGame(void)
                 break;
             }
 
+            /* 接触到 guanzi 的 huwai-exit 传送点 → 返回 huwai1 的道馆门口 */
+            if (teleportCooldown <= 0.0f && worldPlayer.onChuansong && strcmp(worldPlayer.chuansongName, "huwai-exit") == 0)
+            {
+                fadePhase = 1;
+                fadeAlpha = 0.0f;
+                fadeNeedCleanup = true;
+                fadeSwitchMap = true;
+                strncpy(fadeNextMap,
+                        "assets/maps/huwai1.tmj",
+                        sizeof(fadeNextMap) - 1);
+                fadeNextSpawn = (Vector2){ 734, 475 };
+                break;
+            }
+
 
             UpdatePlayer(&worldPlayer, &worldMap, dt);
 
@@ -618,6 +660,35 @@ void UpdateGame(void)
             fadeAlpha = 0.0f;
             fadePhase = 0;
         }
+    }
+
+    /* ========== 背景音乐状态切换 ==========
+     * 地图/战斗各有独立 BGM，通过对比上一帧状态检测切换。 */
+    if (currentState != prevState)
+    {
+        /* 进入战斗 → 切到战斗音乐 */
+        if (currentState == GAME_BATTLE)
+        {
+            StopMusicStream(bgm);
+            PlayMusicStream(battleBgm);
+        }
+        /* 离开战斗 → 停止战斗音乐，回到地图则恢复地图音乐 */
+        else if (prevState == GAME_BATTLE)
+        {
+            StopMusicStream(battleBgm);
+            if (currentState == GAME_WORLD)
+                PlayMusicStream(bgm);
+        }
+        /* 非战斗切换：地图音乐控制 */
+        else if (currentState == GAME_WORLD)
+        {
+            PlayMusicStream(bgm);
+        }
+        else if (prevState == GAME_WORLD)
+        {
+            StopMusicStream(bgm);
+        }
+        prevState = currentState;
     }
 }
 
@@ -707,8 +778,8 @@ void DrawGame(void)
         /* ========== 标题界面 ========== */
         case GAME_TITLE:
         {
-            /* 游戏主标题 */
-            DrawText("POKEMON FIRE RED", 280, 180, 50, RED);
+            /* 背景图铺满全屏 */
+            DrawTexture(titleBg, 0, 0, WHITE);
 
             /* ---------- "开始游戏" 按钮 ---------- */
             Color btnStartColor = LIME;
@@ -1137,6 +1208,9 @@ void CloseGame(void)
         UnloadTexture(pokedexSprite);
     }
     UnloadPokemonDB();         /* 释放宝可梦数据库 */
+    UnloadMusicStream(bgm);    /* 卸载地图背景音乐 */
+    UnloadMusicStream(battleBgm); /* 卸载战斗背景音乐 */
     UnloadTexture(masterTex);  /* 卸载人物纹理 */
+    UnloadTexture(titleBg);    /* 卸载标题背景 */
     UnloadFont(fontCN);        /* 卸载中文字体 */
 }
