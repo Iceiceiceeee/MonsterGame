@@ -3,3 +3,6 @@ build/
 .vscode/
 *.exe
 nul
+tools/pokemon_manager
+tools/pokemon_manager.dSYM/
+assets/images/pokefirered_pngs/

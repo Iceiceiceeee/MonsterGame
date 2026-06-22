@@ -34,6 +34,8 @@ int main(void)
 
     SetTargetFPS(60);                       /* 设定目标帧率为 60 FPS */
 
+    InitAudioDevice();                       /* 初始化音频设备 */
+
     InitGame();                              /* 加载游戏资源与初始状态 */
 
     /* ---------- 游戏主循环 ---------- */
@@ -50,6 +52,8 @@ int main(void)
 
     /* ---------- 清理退出阶段 ---------- */
     CloseGame();                             /* 释放游戏资源（纹理、字体等） */
+
+    CloseAudioDevice();                      /* 关闭音频设备 */
 
     CloseWindow();                           /* 关闭窗口 */
 

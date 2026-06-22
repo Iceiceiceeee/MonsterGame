@@ -1,0 +1,14 @@
+{ "columns":36,
+ "image":"sucai\/yilou.png",
+ "imageheight":417,
+ "imagewidth":588,
+ "margin":0,
+ "name":"yilou",
+ "spacing":0,
+ "tilecount":936,
+ "tiledversion":"1.12.1",
+ "tileheight":16,
+ "tilewidth":16,
+ "type":"tileset",
+ "version":"1.10"
+}

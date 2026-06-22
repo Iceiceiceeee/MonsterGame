@@ -5,7 +5,7 @@ UNAME_S := $(shell uname -s)
 # --- Windows (MSYS2/MinGW) 配置 ---
 ifeq ($(findstring MINGW,$(UNAME_S)),MINGW)
   # 确保 MSYS2 MinGW 工具链在 PATH 中
-  MSYS2_MINGW := C:/msys64/mingw64
+  MSYS2_MINGW := C:/msys64/ucrt64
   export PATH := $(MSYS2_MINGW)/bin:$(PATH)
   CC := gcc
 
